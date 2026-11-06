@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Barangay Management System</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <section id="login">
+    <form id="loginForm">
+      <h1>Barangay Office</h1>
+      <p>Sign in to manage records.</p>
+      <input name="email" type="email" placeholder="Email" required>
+      <input name="password" type="password" placeholder="Password" required>
+      <button>Sign in</button>
+      <small id="loginErr"></small>
+    </form>
+  </section>
+
+  <div id="app" hidden>
+    <aside>
+      <h2>Barangay<br>Office</h2>
+      <nav>
+        <a data-tab="dashboard" class="on">Dashboard</a>
+        <a data-tab="residents">Residents</a>
+        <a data-tab="certificates">Certificates</a>
+        <a data-tab="blotters">Blotter</a>
+      </nav>
+      <button id="logout" class="ghost">Sign out</button>
+    </aside>
+    <main>
+      <header>
+        <h1 id="title">Dashboard</h1><button id="addBtn" hidden>Add record</button>
+      </header>
+      <div id="stats"></div>
+      <input id="search" placeholder="Search..." hidden>
+      <div class="scroll">
+        <table id="table"></table>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="dlg">
+    <form id="form" method="dialog">
+      <h3 id="dlgTitle"></h3>
+      <div id="fields"></div>
+      <menu><button value="cancel" class="ghost" type="button" id="cancel">Cancel</button><button>Save</button></menu>
+    </form>
+  </dialog>
+  <script src="app.js"></script>
+</body>
+
+</html>
