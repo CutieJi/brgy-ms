@@ -5,18 +5,35 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Barangay Management System</title>
+  <link rel="icon" href="assets/images/logo.png" type="image/png">
   <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
   <section id="login">
+    <img class="bg" src="assets/images/back-bg.jpg" alt="">
+    <div class="brand">
+      <img class="logo" src="assets/images/logo.png" alt="Barangay logo">
+      <div class="brand-text">
+        <strong>Barangay 89</strong>
+        <span>Biglang Awa Street, Cor 11th Ave Catleya, Caloocan, 1400 Metro Manila</span>
+      </div>
+    </div>
     <form id="loginForm">
-      <h1>Barangay Office</h1>
+      <h1>Login</h1>
       <p>Sign in to manage records.</p>
-      <input name="email" type="email" placeholder="Email" required>
-      <input name="password" type="password" placeholder="Password" required>
+      <label><span>Email <span class="req">*</span></span>
+        <input name="email" type="email" placeholder="Enter your email" required>
+      </label>
+      <label><span>Password <span class="req">*</span></span>
+        <div class="password-field">
+          <input name="password" type="password" placeholder="Enter your password" required>
+          <button type="button" class="toggle-password" aria-label="Show password">Show</button>
+        </div>
+      </label>
       <button>Sign in</button>
       <small id="loginErr"></small>
+      <p class="register">Don't have an account? <a href="#">Register</a></p>
     </form>
   </section>
 

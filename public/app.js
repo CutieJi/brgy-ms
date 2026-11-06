@@ -44,6 +44,14 @@ $('#loginForm').onsubmit = async e => {
   if (!r.ok) return ($('#loginErr').textContent = d.error);
   token = d.token; sessionStorage.setItem('tok', token); start();
 };
+const pwInput = $('.password-field input');
+const pwToggle = $('.toggle-password');
+pwToggle.onclick = () => {
+  const show = pwInput.type === 'password';
+  pwInput.type = show ? 'text' : 'password';
+  pwToggle.textContent = show ? 'Hide' : 'Show';
+  pwToggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+};
 function logout() { sessionStorage.clear(); location.reload(); }
 $('#logout').onclick = logout;
 
