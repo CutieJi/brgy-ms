@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign In - Barangay Management System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="assets/css/login-ui.css" />
+    <link rel="stylesheet" href="assets/css/modal-pass.css" />
+    <link rel="shortcut icon" href="assets/images/logos.png" type="image/x-icon">
+</head>
+
+<body>
+    <main class="auth-shell">
+        <section class="auth-left">
+            <div class="brand">
+                <img src="assets/images/logos.png" alt="MISLend" class="brand-logo">
+                <span>Barangay Management System</span>
+            </div>
+
+            <div class="slide-show">
+                <div class="slide-track">
+                    <div class="slide active" style="background-image: url('assets/images/login-img.png');">
+                    </div>
+                    <div class="slide" style="background-image: url('assets/images/login-img2.png');">
+                    </div>
+                    <div class="slide" style="background-image: url('assets/images/login-img3.png');">
+                    </div>
+                </div>
+                <div class="slide-overlay"></div>
+            </div>
+
+            <div class="slide-content">
+                <h1>Barangay Management System</h1>
+                <p>Access community records, resident services, requests, reports, and barangay announcements.</p>
+
+                <div class="slide-dots">
+                    <span class="dot active"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                </div>
+            </div>
+        </section>
+
+        <section class="auth-right">
+            <div class="auth-card login-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2>Barangay | <span style="color: #c8921a;">Sign in</span></h2>
+                    <a href="index.html" class="back-btn" title="Back to Home">
+                        <i class="fa-solid fa-arrow-left"></i>
+                    </a>
+                </div>
+                <p class="auth-desc">Sign in to your account</p>
+
+                <form id="unifiedLoginForm" class="auth-form">
+                    <div id="loginAlert" class="form-alert d-none"></div>
+
+                    <div class="field">
+                        <label for="loginEmail">Username or email</label>
+                        <input type="text" id="loginEmail" autocomplete="username" placeholder="Enter your username or email" required />
+                    </div>
+
+                    <div class="field">
+                        <label for="loginPassword">Password</label>
+                        <div class="password-field">
+                            <input type="password" id="loginPassword" minlength="6" placeholder="Enter your password" required />
+                            <button type="button" class="toggle-password" id="togglePassword">Show</button>
+                        </div>
+                    </div>
+
+                    <div class="form-row">
+                        <a href="#" class="text-link" id="forgotPasswordLink">Forgot Password?</a>
+                    </div>
+
+                    <button type="submit" class="main-btn"><span>Sign In</span></button>
+
+                    <p class="bottom-text">
+                        Don't have an account?
+                        <a href="register.html">Register</a>
+                    </p>
+                </form>
+            </div>
+        </section>
+    </main>
+
+    <!-- Forgot Password Modal -->
+    <div id="forgotPasswordModal" class="modal forgot-password-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Reset Password</h2>
+                <button type="button" class="modal-close" id="modalClose" aria-label="Close">&times;</button>
+            </div>
+            <form id="forgotPasswordForm" class="login-form modal-form-layout">
+                <div class="modal-scroll-body">
+                    <p id="resetDescription" class="modal-desc">Enter your email address and we’ll send you a secure link to reset your password.</p>
+                    <div id="resetAlert" class="form-alert d-none" role="status" aria-live="polite"></div>
+                    <div id="resetEmailField" class="form-group">
+                        <label for="resetEmail">Email Address</label>
+                        <input type="email" id="resetEmail" autocomplete="email" placeholder="Enter your email address" required />
+                    </div>
+
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" id="cancelForgotPassword">Cancel</button>
+                    <button id="resetSubmitButton" type="submit" class="btn btn-primary">
+                        <span>Send Reset Link</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="assets/js/app.js"></script>
+    <script src="assets/js/auth-slider.js"></script>
+    <script src="assets/js/auth.js"></script>
+    <script>
+        // Toggle password visibility
+        const toggleBtn = document.getElementById('togglePassword');
+        const passwordInput = document.getElementById('loginPassword');
+        if (toggleBtn && passwordInput) {
+            toggleBtn.addEventListener('click', () => {
+                const isHidden = passwordInput.type === 'password';
+                passwordInput.type = isHidden ? 'text' : 'password';
+                toggleBtn.textContent = isHidden ? 'Hide' : 'Show';
+            });
+        }
+
+        // Forgot Password Modal
+        const forgotPasswordLink = document.getElementById('forgotPasswordLink');
+        const forgotPasswordModal = document.getElementById('forgotPasswordModal');
+        const modalClose = document.getElementById('modalClose');
+        const forgotPasswordForm = document.getElementById('forgotPasswordForm');
+        const resetAlert = document.getElementById('resetAlert');
+        const resetDescription = document.getElementById('resetDescription');
+        const resetSubmitButton = document.getElementById('resetSubmitButton');
+        const resetEmailInput = document.getElementById('resetEmail');
+        const clearResetAlert = () => {
+            resetAlert.className = 'form-alert d-none';
+            resetAlert.textContent = '';
+        };
+        const showResetAlert = (message, type) => {
+            resetAlert.className = `form-alert alert-${type}`;
+            resetAlert.textContent = message;
+        };
+        const resetForgotPasswordForm = () => {
+            forgotPasswordForm.reset();
+            resetDescription.textContent = 'Enter your email address and we’ll send you a secure link to reset your password.';
+            resetSubmitButton.querySelector('span').textContent = 'Send Reset Link';
+            clearResetAlert();
+        };
+        const closeForgotPasswordModal = () => {
+            forgotPasswordModal.classList.remove('show');
+            resetForgotPasswordForm();
+        };
+
+        if (forgotPasswordLink) {
+            forgotPasswordLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                forgotPasswordModal.classList.add('show');
+            });
+        }
+
+        if (modalClose) {
+            modalClose.addEventListener('click', closeForgotPasswordModal);
+        }
+        document.getElementById('cancelForgotPassword').addEventListener('click', closeForgotPasswordModal);
+
+        // Close modal when clicking outside
+        if (forgotPasswordModal) {
+            forgotPasswordModal.addEventListener('click', (e) => {
+                if (e.target === forgotPasswordModal) {
+                    closeForgotPasswordModal();
+                }
+            });
+        }
+
+        if (forgotPasswordForm) {
+            forgotPasswordForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                clearResetAlert();
+                const email = resetEmailInput.value.trim();
+                const submitButtonLabel = resetSubmitButton.querySelector('span');
+                resetSubmitButton.disabled = true;
+                try {
+                    submitButtonLabel.textContent = 'Sending...';
+                    await auth.sendPasswordResetEmail(email);
+                    resetDescription.textContent = 'If an account exists for that email, a reset link is on its way. The link expires in one hour.';
+                    showResetAlert('Check your inbox for the password reset link. You can close this window after requesting it.', 'success');
+                    submitButtonLabel.textContent = 'Send Another Link';
+                } catch (error) {
+                    showResetAlert(error.message || 'Unable to send a password reset link. Please try again.', 'error');
+                    submitButtonLabel.textContent = 'Send Reset Link';
+                } finally {
+                    resetSubmitButton.disabled = false;
+                }
+            });
+        }
+
+    </script>
+</body>
+
+</html>

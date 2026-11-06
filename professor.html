@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Professor - MISLend</title>
+    <link rel="stylesheet" href="assets/css/professor-ui.css?v=20261020-notification-read-1">
+    <link rel="stylesheet" href="assets/css/modal.css">
+    <link rel="stylesheet" href="assets/css/admin-tailadmin.css?v=20261020-chat-4">
+    <link rel="stylesheet" href="assets/css/dashboard-dark.css?v=20261017-11">
+    <link rel="shortcut icon" href="assets/images/logos.png" type="image/x-icon">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Outfit:wght@100..900&display=swap"
+        rel="stylesheet">
+    <script>(function () {
+            try {
+                var labels = { browse: 'Browse Equipment', scan: 'Scan QR Code', myborrowed: 'My Borrowed Items', history: 'Borrowing History', incidents: 'Incident Reports'};
+                var v = localStorage.getItem('professor-active-view');
+                if (v) {
+                    document.addEventListener('DOMContentLoaded', function () {
+                        document.querySelectorAll('.view-container').forEach(function (el) { el.classList.remove('active'); });
+                        var t = document.getElementById(v + 'View');
+                        if (t) t.classList.add('active');
+                        var b = document.getElementById('breadcrumbCurrent');
+                        if (b) b.textContent = labels[v] || v;
+                        var section = document.getElementById('breadcrumbSection');
+                        var nav = document.querySelector('.nav-item[data-view="' + v + '"]');
+                        var menuLabel = nav && nav.closest('.sidebar-menu-inner')?.previousElementSibling;
+                        if (section && menuLabel && menuLabel.classList.contains('sidebar-menu-label')) {
+                            section.textContent = menuLabel.textContent.trim().toLowerCase()
+                                .replace(/\b[a-z]/g, function (letter) { return letter.toUpperCase(); });
+                        }
+                        var m = document.getElementById('topbarMobileTitle');
+                        if (m) m.textContent = labels[v] || v;
+                        var n = nav;
+                        if (n) { n.classList.add('active'); var li = n.closest('.sidebar-item'); if (li) li.classList.add('active'); }
+                    });
+                }
+            } catch (e) { }
+        })();</script>
+</head>
+
+<body class="dashboard-page">
+    <div class="loader-wrapper" id="pageLoader">
+        <div class="loader-spinner"></div>
+    </div>
+
+    <div class="dashboard-container page-content-fade" id="pageContent">
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <img src="assets/images/logos.png" width="32" height="32" alt="MISLend">
+                    <span>MIS<span class="logo-dot">Lend</span></span>
+                </div>
+            </div>
+
+            <nav class="sidebar-menu">
+                <div class="sidebar-menu-label">MAIN MENU</div>
+                <ul class="sidebar-menu-inner">
+                    <li class="sidebar-item active">
+                        <a href="#" class="sidebar-link nav-item active" data-view="browse">
+                            <span class="sidebar-icon">
+                                <i class="fa-solid fa-magnifying-glass"></i>
+                            </span>
+                            <span class="sidebar-text">Browse Equipment</span>
+                        </a>
+                    </li>
+                    <li class="sidebar-item">
+                        <a href="#" class="sidebar-link nav-item" data-view="scan">
+                            <span class="sidebar-icon">
+                                <i class="fa-solid fa-qrcode"></i>
+                            </span>
+                            <span class="sidebar-text">Scan QR Code</span>
+                        </a>
+                    </li>
+                </ul>
+
+                <div class="sidebar-menu-label">MY ACTIVITY</div>
+                <ul class="sidebar-menu-inner">
+                    <li class="sidebar-item">
+                        <a href="#" class="sidebar-link nav-item" data-view="myborrowed">
+                            <span class="sidebar-icon">
+                                <i class="fa-solid fa-hourglass-half"></i>
+                            </span>
+                            <span class="sidebar-text">My Borrowed Items</span>
+                            <span class="sidebar-badge" data-count-for="myborrowed" hidden style="display:none"></span>
+                        </a>
+                    </li>
+                    <li class="sidebar-item">
+                        <a href="#" class="sidebar-link nav-item" data-view="history">
+                            <span class="sidebar-icon">
+                                <i class="fa-regular fa-clock"></i>
+                            </span>
+                            <span class="sidebar-text">Borrowing History</span>
+                        </a>
+                    </li>
+                    <li class="sidebar-item">
+                        <a href="#" class="sidebar-link nav-item" data-view="incidents">
+                            <span class="sidebar-icon">
+                                <i class="fa-solid fa-triangle-exclamation"></i>
+                            </span>
+                            <span class="sidebar-text">Incident Reports</span>
+                        </a>
+                    </li>
+                </ul>
+
+                <div class="sidebar-menu-label">PROFILE</div>
+                <ul class="sidebar-menu-inner">
+                    <li class="sidebar-item">
+                        <a href="#" class="sidebar-link nav-item" data-view="profile">
+                            <span class="sidebar-icon">
+                                <i class="fa-regular fa-user"></i>
+                            </span>
+                            <span class="sidebar-text">Profile</span>
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+
+        </aside>
+
+        <main class="main-content">
+            <header class="topbar" id="topbar">
+                <div class="topbar-left">
+                    <button class="topbar-toggle" id="topbarToggle" aria-label="Toggle menu">
+                        <i class="fa-solid fa-bars"></i>
+                    </button>
+                    <nav class="topbar-breadcrumb" id="topbarBreadcrumb">
+                        <span class="breadcrumb-home" id="breadcrumbSection">Main Menu</span>
+                        <span class="breadcrumb-sep">/</span>
+                        <span class="breadcrumb-current" id="breadcrumbCurrent">Browse Equipment</span>
+                    </nav>
+                </div>
+
+                <form class="topbar-search" id="topbarSearchForm" role="search">
+                    <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                    <input id="topbarSearchInput" type="search" placeholder="Search pages and equipment..." aria-label="Search dashboard pages and equipment">
+                    <kbd>Ctrl K</kbd>
+                </form>
+
+                <div class="topbar-center">
+                    <div class="topbar-brand">
+                        <img src="assets/images/logos.png" width="22" height="22" alt="MISLend">
+                        <span class="topbar-brand-name">MIS<span class="logo-dot">Lend</span></span>
+                    </div>
+                    <span class="topbar-mobile-title" id="topbarMobileTitle">Browse Equipment</span>
+                </div>
+
+                <div class="topbar-right">
+                    <div class="topbar-theme-toggle">
+                        <label class="theme-switch">
+                            <input type="checkbox" id="topbarThemeCheckbox">
+                            <span class="theme-switch-track">
+                                <i class="fa-regular fa-moon" aria-hidden="true"></i>
+                            </span>
+                        </label>
+                    </div>
+                    <div class="notification-dropdown" id="notificationDropdown">
+                        <button class="topbar-icon-btn topbar-notification-btn" id="topbarNotificationBtn"
+                            type="button" aria-label="Notifications" title="Notifications" aria-expanded="false"
+                            aria-controls="notificationMenu">
+                            <i class="fa-regular fa-bell" aria-hidden="true"></i>
+                            <span class="topbar-notification-badge" id="topbarNotificationBadge" hidden></span>
+                        </button>
+                        <section class="notification-menu" id="notificationMenu" aria-label="Notifications">
+                            <div class="notification-header">
+                                <div>
+                                    <h2>Notifications</h2>
+                                    <p>Your borrowing updates</p>
+                                </div>
+                            </div>
+                            <div class="notification-list" id="notificationList" aria-live="polite">
+                                <div class="notification-empty">Open to check for updates.</div>
+                            </div>
+                        </section>
+                    </div>
+                    <div class="topbar-divider"></div>
+                    <div class="profile-dropdown" id="profileDropdown">
+                        <button class="profile-trigger" id="profileTrigger" aria-expanded="false">
+                            <div class="topbar-user-avatar-s" id="topbarAvatarContainer">
+                                <span id="topbarInitial">S</span>
+                            </div>
+                            <div class="topbar-user-info">
+                                <span class="topbar-user-name" id="topbarUserName">Professor</span>
+                                <span class="topbar-user-role">Professor</span>
+                            </div>
+                            <i class="fa-solid fa-chevron-down"></i>
+                        </button>
+                        <div class="profile-menu" id="profileMenu">
+                            <div class="profile-menu-header">
+                                <div class="profile-menu-avatar-s" id="menuAvatarContainer">
+                                    <span id="menuInitial">S</span>
+                                </div>
+                                <div>
+                                    <div class="profile-menu-name" id="menuUserName">Professor</div>
+                                    <div class="profile-menu-email" id="menuUserEmail">professor@email.com</div>
+                                </div>
+                            </div>
+                            <div class="profile-menu-divider"></div>
+                            <button class="profile-menu-item" id="viewProfileBtn">
+                                <i class="fa-regular fa-user"></i>
+                                Profile
+                            </button>
+                            <button class="profile-menu-item" id="changePassBtn">
+                                <i class="fa-solid fa-lock"></i>
+                                Change Password
+                            </button>
+                            <div class="profile-menu-divider"></div>
+                            <button class="profile-menu-item" id="logoutBtn">
+                                <i class="fa-solid fa-arrow-right-from-bracket"></i>
+                                Sign out
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <div class="main-content-inner">
+                <div id="overdueReminderBanner"
+                    style="display: none; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); border-left: 4px solid var(--danger); padding: 1rem 1.25rem; margin-bottom: 1.5rem; border-radius: var(--radius-md); align-items: center; gap: 1rem;">
+                    <i class="fa-solid fa-triangle-exclamation"
+                        style="color: var(--danger); font-size: 1.25rem;"></i>
+                    <div>
+                        <strong style="color: var(--danger); display: block; margin-bottom: 0.2rem;">Overdue Return Warning</strong>
+                        <span id="overdueReminderText" style="color: var(--text-primary); font-size: 0.875rem;"></span>
+                    </div>
+                </div>
+                <div class="view-container active" id="browseView">
+                    <div class="content-header">
+                        <div>
+                            <h1 class="page-title">Browse Equipment</h1>
+                            <p class="page-subtitle">Find and borrow available equipment</p>
+                        </div>
+                    </div>
+                    <div class="equipment-filters">
+                        <div class="filter-group">
+                            <label>Category:</label>
+                            <select id="categoryFilter">
+                                <option value="all">All Categories</option>
+                                <option value="projector">Projectors</option>
+                                <option value="cable">Cables &amp; Adapters</option>
+                                <option value="extension">Extensions</option>
+                                <option value="speaker">Speakers</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Status:</label>
+                            <select id="statusFilter">
+                                <option value="available">Available Only</option>
+                                <option value="all">All Items</option>
+                            </select>
+                        </div>
+                        <div class="search-group">
+                            <input type="text" id="searchEquipment" placeholder="Search equipment...">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="m21 21-4.35-4.35"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="equipment-grid" id="equipmentGrid"></div>
+                </div>
+
+                <div class="view-container" id="scanView">
+                    <div class="content-header">
+                        <div>
+                            <h1 class="page-title">Scan QR Code</h1>
+                            <p class="page-subtitle">Scan equipment QR code to borrow or return</p>
+                        </div>
+                    </div>
+                    <div class="qr-scanner-container">
+                        <div class="scanner-box">
+                            <div id="scanStatus" class="scan-status" style="display: none;"></div>
+                            <div id="qr-reader" style="width: 100%; max-width: 500px; margin: 0 auto;"></div>
+                            <div class="scanner-instructions">
+                                <h3>How to scan:</h3>
+                                <ol>
+                                    <li>Allow camera access when prompted</li>
+                                    <li>Point your camera at the QR code on the equipment</li>
+                                    <li>The system will automatically detect and process the code</li>
+                                </ol>
+                            </div>
+                        </div>
+                        <div class="manual-entry">
+                            <h3>Or enter Equipment ID manually:</h3>
+                            <div class="manual-form">
+                                <input type="text" id="manualEquipmentId"
+                                    placeholder="Enter Equipment ID (e.g., PROJ-001)">
+                                <button class="btn btn-primary" id="manualSubmitBtn"><span>Submit</span></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="view-container" id="myborrowedView">
+                    <div class="content-header">
+                        <div>
+                            <h1 class="page-title">My Borrowed Items</h1>
+                            <p class="page-subtitle">Currently borrowed equipment</p>
+                        </div>
+                    </div>
+                    <div class="borrowed-items-grid" id="borrowedItemsGrid"></div>
+                </div>
+
+                <div class="view-container" id="historyView">
+                    <div class="content-header">
+                        <div>
+                            <h1 class="page-title">Borrowing History</h1>
+                            <p class="page-subtitle">Complete history of your borrowing activities</p>
+                        </div>
+                    </div>
+
+                    <div class="equipment-filters logs-filters">
+                        <div class="filter-group">
+                            <label>Date Range:</label>
+                            <input type="date" id="historyStartDate" class="date-input" oninput="loadHistory()">
+                            <span>to</span>
+                            <input type="date" id="historyEndDate" class="date-input" oninput="loadHistory()">
+                        </div>
+                        <div class="search-group" style="max-width: 250px; margin-left: 0;">
+                            <input type="text" id="historyEquipmentFilter" placeholder="Search by equipment..."
+                                oninput="loadHistory()">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <path d="m21 21-4.35-4.35"></path>
+                            </svg>
+                        </div>
+                        <div class="filter-group">
+                            <label>Status:</label>
+                            <select id="historyStatusFilter" onchange="loadHistory()"
+                                style="padding: 0.5rem; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 0.85rem;">
+                                <option value="all">All</option>
+                                <option value="returned">Returned</option>
+                                <option value="borrowed">Borrowed</option>
+                                <option value="pending_borrow">Pending Approval</option>
+                                <option value="pending_return">Return Pending</option>
+                                <option value="rejected">Rejected</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>Sort By:</label>
+                            <select id="historySort" onchange="loadHistory()"
+                                style="padding: 0.5rem; border-radius: var(--radius-md); border: 1px solid var(--border); background: var(--bg-secondary); color: var(--text-primary); font-size: 0.85rem;">
+                                <option value="borrowedAt_desc">Newest First</option>
+                                <option value="borrowedAt_asc">Oldest First</option>
+                                <option value="equipmentName_asc">Equipment Name (A-Z)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="logs-list" id="historyList"></div>
+                </div>
+
+                <div class="view-container tailadmin-profile-view" id="profileView">
+                    <div class="content-header">
+                        <div>
+                            <h1 class="page-title">User Profile</h1>
+                            <p class="page-subtitle">View your MISLend account information</p>
+                        </div>
+                    </div>
+
+                    <div class="tailadmin-profile-grid">
+                        <section class="tailadmin-profile-card">
+                            <h2>My Profile</h2>
+                            <div class="tailadmin-profile-section">
+                                <div class="tailadmin-profile-summary">
+                                    <div class="tailadmin-profile-avatar" id="professorProfilePageAvatar"><span>P</span></div>
+                                    <div class="tailadmin-profile-identity">
+                                        <h3 id="professorProfilePageName">Professor</h3>
+                                        <p><span>Professor</span><span class="tailadmin-profile-separator"></span><span>MISLend</span></p>
+                                    </div>
+                                    <button type="button" class="btn btn-secondary tailadmin-profile-edit" id="profilePageEditBtn">
+                                        <i class="fa-solid fa-pen"></i> Edit
+                                    </button>
+                                </div>
+                                <div class="tailadmin-profile-details">
+                                    <div class="tailadmin-profile-field">
+                                        <span>First name</span>
+                                        <strong id="professorProfilePageFirstName">Not provided</strong>
+                                    </div>
+                                    <div class="tailadmin-profile-field">
+                                        <span>Last name</span>
+                                        <strong id="professorProfilePageLastName">Not provided</strong>
+                                    </div>
+                                    <div class="tailadmin-profile-field">
+                                        <span>Email address</span>
+                                        <strong id="professorProfilePageEmail">Not provided</strong>
+                                    </div>
+                                    <div class="tailadmin-profile-field">
+                                        <span>Account type</span>
+                                        <strong>Professor</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="tailadmin-profile-section">
+                                <h3>Faculty Information</h3>
+                                <div class="tailadmin-profile-details">
+                                    <div class="tailadmin-profile-field">
+                                        <span>Faculty ID</span>
+                                        <strong id="professorProfilePageFacultyId">Not provided</strong>
+                                    </div>
+                                    <div class="tailadmin-profile-field">
+                                        <span>Mobile number</span>
+                                        <strong id="professorProfilePageMobile">Not provided</strong>
+                                    </div>
+                                    <div class="tailadmin-profile-field">
+                                        <span>Gender</span>
+                                        <strong id="professorProfilePageGender">Not provided</strong>
+                                    </div>
+                                    <div class="tailadmin-profile-field">
+                                        <span>Department</span>
+                                        <strong id="professorProfilePageDepartment">Not provided</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="tailadmin-profile-section">
+                                <h3>Account Access</h3>
+                                <div class="tailadmin-profile-details">
+                                    <div class="tailadmin-profile-field">
+                                        <span>Platform access</span>
+                                        <strong>Professor</strong>
+                                    </div>
+                                    <div class="tailadmin-profile-field">
+                                        <span>Access details</span>
+                                        <strong>Borrow equipment and manage your borrowing records.</strong>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="tailadmin-profile-section">
+                                <h3>Account Security</h3>
+                                <p>Update your password to keep your account secure.</p>
+                                <button type="button" class="btn btn-secondary" id="profilePageChangePassBtn">
+                                    <i class="fa-solid fa-lock"></i> Change Password
+                                </button>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+
+                <!-- Incident Reports View -->
+                <div class="view-container" id="incidentsView">
+                    <div class="content-header">
+                        <div>
+                            <h1 class="page-title">Incident Reports</h1>
+                            <p class="page-subtitle">Report damaged or defective equipment</p>
+                        </div>
+                        <button class="btn btn-primary" id="newIncidentBtn">
+                            <i class="fa-solid fa-plus"></i> New Report
+                        </button>
+                    </div>
+
+                    <!-- My Incidents List -->
+                    <div class="incident-reports-list" id="myIncidentsList"></div>
+
+                    <!-- Incident Chat Detail -->
+                    <div class="incident-detail-panel" id="userIncidentDetailPanel" style="display: none;">
+                        <div class="incident-detail-header">
+                            <button class="btn btn-secondary btn-sm" id="backToMyIncidentsBtn">
+                                <i class="fa-solid fa-arrow-left"></i> Back
+                            </button>
+                            <div class="incident-detail-status" id="userIncidentStatus"></div>
+                        </div>
+                        <div class="incident-info-card" id="userIncidentInfoCard"></div>
+                        <div class="incident-chat-container">
+                            <h3 style="margin-bottom: 0.75rem;">Conversation</h3>
+                            <div class="chat-messages" id="userChatMessages"></div>
+                            <div id="userChatReadOnlyNotice" class="chat-readonly-notice" role="status" style="display: none;">
+                                This incident has been approved. You can view the conversation, but cannot send new messages.
+                            </div>
+                            <div class="chat-input-row">
+                                <input type="text" id="userChatInput" placeholder="Type a message..." />
+                                <button class="btn btn-primary btn-sm" id="userSendChatBtn">
+                                    <i class="fa-solid fa-paper-plane"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <div class="modal" id="borrowModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Confirm Borrowing</h2>
+                    <button class="modal-close" id="closeBorrowModal">&times;</button>
+                </div>
+                <div class="borrow-detail" id="borrowDetail"></div>
+                <div class="form-group">
+                    <label for="returnTime">Expected Return Time</label>
+                    <input type="time" id="returnTime" class="date-input" required>
+                </div>
+                <div class="form-group">
+                    <label for="room">Room (Where you will use it)</label>
+                    <input type="text" id="room" placeholder="e.g., 301, CL1" required />
+                </div>
+                <div class="form-group">
+                    <label for="purpose">Purpose of Borrowing</label>
+                    <textarea id="purpose" rows="3" placeholder="e.g., Presentation in Room 305"></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="cancelBorrow">Cancel</button>
+                    <button class="btn btn-primary" id="confirmBorrow">
+                        Confirm Borrow
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="modal" id="returnModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Return Equipment</h2>
+                    <button class="modal-close" id="closeReturnModal" type="button" aria-label="Close">&times;</button>
+                </div>
+                <div class="modal-scroll-body">
+                    <div id="returnDetail" style="margin-bottom: 1rem;"></div>
+                    <div class="form-group">
+                        <label for="condition">Equipment Condition</label>
+                        <select id="condition" required>
+                            <option value="">Select condition</option>
+                            <option value="good">Good - No issues</option>
+                            <option value="damaged">Damaged - Needs repair</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="notes">Return Notes (optional)</label>
+                        <textarea id="notes" rows="3" placeholder="Add any notes about the item's condition"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="returnPhotoInput">Photo of returned item <span aria-hidden="true">*</span></label>
+                        <input id="returnPhotoInput" type="file" accept="image/*" capture="environment" required>
+                        <small>Take a clear photo of the item as proof of its condition. Maximum file size: 5 MB.</small>
+                        <img id="returnPhotoPreview" alt="Return item photo preview" style="display:none;max-width:100%;max-height:260px;margin-top:0.75rem;border-radius:0.75rem;object-fit:contain;">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="cancelReturn" type="button">Cancel</button>
+                    <button class="btn btn-primary" id="confirmReturn" type="button">Submit Return Request</button>
+                </div>
+            </div>
+        </div>
+        <div class="modal" id="extendModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Request Extension</h2>
+                    <button class="modal-close" id="closeExtendModal">&times;</button>
+                </div>
+                <div id="extendDetail" style="margin-bottom: 1.5rem;"></div>
+                <div class="form-group">
+                    <label for="newReturnTime">New Expected Return Time</label>
+                    <input type="time" id="newReturnTime" class="date-input" required>
+                </div>
+                <div class="form-group">
+                    <label for="extendReason">Reason for Extension <span aria-hidden="true">*</span></label>
+                    <textarea id="extendReason" rows="3" placeholder="e.g., Presentation is running late..." required></textarea>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="cancelExtend">Cancel</button>
+                    <button class="btn btn-primary" id="confirmExtend">
+                        Send Request
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal profile-edit-modal" id="profileModal">
+            <div class="modal-content profile-modal-content">
+                <div class="modal-header profile-modal-header">
+                    <div>
+                        <h2>Edit Personal Information</h2>
+                        <p>Update your details to keep your profile up-to-date.</p>
+                    </div>
+                    <button class="modal-close" type="button" onclick="closeProfileModal()">&times;</button>
+                </div>
+                <div class="profile-modal-body">
+                    <div class="login-form">
+                        <h3 class="profile-modal-section-title">Change Profile Picture</h3>
+                        <div class="profile-photo-row">
+                            <div class="profile-photo-avatar-wrap">
+                                <div class="profile-edit-avatar" id="profileEditAvatarContainer">
+                                    <span id="profileEditInitial">P</span>
+                                </div>
+                                <label class="profile-photo-upload" aria-label="Update profile photo">
+                                    <i class="fa-solid fa-camera" aria-hidden="true"></i>
+                                    <input type="file" id="profilePhotoInput" accept="image/*"
+                                        onchange="previewProfilePhoto(this)">
+                                </label>
+                            </div>
+                            <p class="profile-photo-hint">Your photo is fitted automatically. JPEG or PNG format.</p>
+                        </div>
+                        <h3 class="profile-modal-section-title">Personal Information</h3>
+                        <div class="profile-form-grid">
+                            <div class="profile-form-field">
+                                <label for="profileFirstName">First Name</label>
+                                <input type="text" id="profileFirstName" class="form-control" required>
+                            </div>
+                            <div class="profile-form-field">
+                                <label for="profileMiddleInitial">Middle Initial</label>
+                                <input type="text" id="profileMiddleInitial" class="form-control"
+                                    maxlength="1" placeholder="M.I." oninput="this.value = this.value.toUpperCase()">
+                            </div>
+                            <div class="profile-form-field">
+                                <label for="profileLastName">Last Name</label>
+                                <input type="text" id="profileLastName" class="form-control" required>
+                            </div>
+                            <div class="profile-form-field">
+                                <label for="profileEmail">Email Address</label>
+                                <input type="email" id="profileEmail" class="form-control" disabled>
+                            </div>
+                            <div class="profile-form-field">
+                                <label for="profileFacultyId">Faculty ID <span class="required-asterisk">*</span></label>
+                                <input type="text" id="profileFacultyId" class="form-control" maxlength="10" required>
+                            </div>
+                            <div class="profile-form-field">
+                                <label for="profileMobile">Phone <span class="required-asterisk">*</span></label>
+                                <input type="tel" id="profileMobile" class="form-control" maxlength="11"
+                                    pattern="[0-9]{11}" inputmode="numeric" oninput="this.value = this.value.replace(/[^0-9]/g, '');" required>
+                            </div>
+                            <div class="profile-form-field">
+                                <label for="profileGender">Gender</label>
+                                <select id="profileGender" class="form-control">
+                                    <option value="">Select</option>
+                                    <option value="Male">Male</option>
+                                    <option value="Female">Female</option>
+                                    <option value="Custom">Custom</option>
+                                </select>
+                            </div>
+                            <div class="profile-form-field">
+                                <label for="profileDepartment">Department</label>
+                                <select id="profileDepartment" class="form-control">
+                                    <option value="">Select Department</option>
+                                    <option value="College">College</option>
+                                    <option value="Graduate School">Graduate School</option>
+                                    <option value="College of Law">College of Law</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="profile-modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeProfileModal()">Close</button>
+                    <button type="button" class="btn btn-primary" onclick="saveProfile()">Save Changes</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" id="passwordModal">
+            <div class="modal-content" style="max-width: 440px;">
+                <div class="modal-header">
+                    <h2>Change Password</h2>
+                    <button class="modal-close" onclick="closePasswordModal()">&times;</button>
+                </div>
+                <div class="login-form">
+                    <div class="form-group">
+                        <label>Current Password</label>
+                        <input type="password" id="currentPassword" placeholder="Enter current password"
+                            required>
+                    </div>
+                    <div class="form-group">
+                        <label>New Password</label>
+                        <input type="password" id="newPassword" placeholder="Enter new password (min. 6 chars)" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Confirm New Password</label>
+                        <input type="password" id="confirmPassword" placeholder="Repeat new password"
+                            autocomplete="new-password" required>
+                    </div>
+
+                    <!-- Email Verification Section -->
+                    <div class="form-group" style="background: var(--bg-secondary, #f8fafc); border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 12px; margin-top: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <label style="margin: 0; font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                                <i class="fa-solid fa-shield-halved" style="color: var(--primary);"></i> Email Verification Code
+                            </label>
+                            <button type="button" class="btn btn-secondary btn-sm" id="sendProfOtpBtn" onclick="sendPasswordChangeOtp()" style="padding: 4px 10px; font-size: 0.78rem;">
+                                <i class="fa-solid fa-paper-plane"></i> <span id="sendProfOtpText">Send Code</span>
+                            </button>
+                        </div>
+                        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 8px;" id="profEmailHint">
+                            Verification code will be sent to your registered email.
+                        </div>
+                        <input type="text" id="passwordOtpCodeProf" placeholder="Enter 6-digit code" maxlength="6" style="letter-spacing: 4px; font-weight: 600; text-align: center; font-size: 1.05rem;" required>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" onclick="closePasswordModal()">Cancel</button>
+                        <button type="button" class="btn btn-primary" onclick="changePassword()">Update Password</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <nav class="bottom-nav">
+            <a href="#" class="bottom-nav-item active" data-view="browse" onclick="switchView('browse')">
+                <div class="nav-icon-wrap"><i class="fa-solid fa-magnifying-glass"></i></div>
+                <span>Browse</span>
+            </a>
+            <a href="#" class="bottom-nav-item" data-view="scan" onclick="switchView('scan')">
+                <div class="nav-icon-wrap"><i class="fa-solid fa-qrcode"></i></div>
+                <span>Scan</span>
+            </a>
+            <a href="#" class="bottom-nav-item" data-view="myborrowed" onclick="switchView('myborrowed')">
+                <div class="nav-icon-wrap">
+                    <i class="fa-solid fa-hourglass-half"></i>
+                    <span class="nav-badge" data-count-for="myborrowed" hidden style="display:none"></span>
+                </div>
+                <span>Borrowed</span>
+            </a>
+            <a href="#" class="bottom-nav-item" data-view="history" onclick="switchView('history')">
+                <div class="nav-icon-wrap"><i class="fa-regular fa-clock"></i></div>
+                <span>History</span>
+            </a>
+            <a href="#" class="bottom-nav-item" data-view="incidents" onclick="switchView('incidents')">
+                <div class="nav-icon-wrap"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                <span>Reports</span>
+            </a>
+        </nav>
+
+        <div class="cart-fab" id="cartFab" onclick="toggleCartModal()" aria-label="Open borrowing cart">
+            <i class="fa-solid fa-hand-holding"></i>
+            <div class="cart-badge" id="cartBadge">0</div>
+        </div>
+
+        <div class="modal" id="cartModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Your Borrowing Cart</h2>
+                    <button class="modal-close" onclick="toggleCartModal()" aria-label="Close cart">&times;</button>
+                </div>
+                <div id="cartItemsList" class="modal-scroll-body" style="margin-bottom: 1.5rem; max-height: 350px; overflow-y: auto; padding-right: 5px;"></div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="clearCart()">Clear All</button>
+                    <button class="btn btn-primary" onclick="proceedToBorrow()">Next: Details</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="toast" id="toast"></div>
+
+    <div class="modal" id="imageZoomModal" style="display: none; align-items: center; justify-content: center; z-index: 9999;">
+        <div class="modal-content" style="max-width: 90vw; background: transparent; box-shadow: none; padding: 0;">
+            <div style="position: relative; text-align: center; display: inline-block;">
+                <button class="modal-close" onclick="document.getElementById('imageZoomModal').classList.remove('active')" style="position: absolute; top: -15px; right: -15px; background: #fff; width: 35px; height: 35px; border-radius: 50%; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; align-items: center; justify-content: center; z-index: 10;">&times;</button>
+                <img id="zoomedImagePreview" src="" style="max-width: 100%; max-height: 85vh; border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.25);">
+            </div>
+        </div>
+    </div>
+
+        <script src="https://kit.fontawesome.com/ca64101f16.js" crossorigin="anonymous" async></script>
+        <script src="https://unpkg.com/html5-qrcode" async></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" async></script>
+        <script src="assets/js/app.js?v=20261020-notification-read-1" defer></script>
+        <script src="assets/js/cropper.js?v=20261017-4" defer></script>
+        <script src="assets/js/dashboard-search.js?v=20261017-3" defer></script>
+        <script src="assets/js/professor.js?v=20261020-chat-align-1" defer></script>
+</body>
+
+</html>

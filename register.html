@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Resident Registration - Barangay Management System</title>
+    <link rel="stylesheet" href="assets/css/login-ui.css" />
+    <link rel="shortcut icon" href="assets/images/logos.png" type="image/x-icon">
+</head>
+
+<body>
+    <main class="auth-shell register-shell">
+        <section class="auth-left">
+            <div class="brand">
+                <img src="assets/images/logos.png" alt="MISLend" class="brand-logo">
+                <span>Barangay Management System</span>
+            </div>
+
+            <div class="slide-show">
+                <div class="slide-track">
+                    <div class="slide active" style="background-image: url('assets/images/login-img.png');">
+                    </div>
+                    <div class="slide" style="background-image: url('assets/images/login-img2.png');">
+                    </div>
+                    <div class="slide" style="background-image: url('assets/images/login-img3.png');">
+                    </div>
+                </div>
+                <div class="slide-overlay"></div>
+            </div>
+
+            <div class="slide-content">
+                <h1>Create a Resident Account</h1>
+                <p>Register to request barangay services and receive updates from your barangay.</p>
+
+                <div class="slide-dots">
+                    <span class="dot active"></span>
+                    <span class="dot"></span>
+                    <span class="dot"></span>
+                </div>
+            </div>
+        </section>
+
+        <section class="auth-right">
+            <div class="auth-card register-card compact-register">
+                <h2>Barangay | <span style="color: #c8921a;">Resident Registration</span></h2>
+                <p class="auth-desc">Enter your personal and account information</p>
+
+                <form id="unifiedRegisterForm" class="auth-form">
+                    <div id="registerAlert" class="form-alert d-none"></div>
+
+                    <div class="register-grid compact-grid">
+                        <!-- Row 1: First Name | Middle Initial | Last Name -->
+                        <div class="field col-first">
+                            <label for="registerFirstName">First Name</label>
+                            <input type="text" id="registerFirstName" placeholder="First Name" required />
+                        </div>
+
+                        <div class="field col-mi">
+                            <label for="registerMiddleInitial">Middle Initial</label>
+                            <input type="text" id="registerMiddleInitial" placeholder="M.I." maxlength="1"
+                                oninput="this.value = this.value.toUpperCase()" />
+                        </div>
+
+                        <div class="field col-last">
+                            <label for="registerLastName">Last Name</label>
+                            <input type="text" id="registerLastName" placeholder="Last Name" required />
+                        </div>
+
+                        <!-- Row 2: ID | Mobile Number -->
+                        <div class="field">
+                            <label for="registerStudentId" id="registerIdLabel">Student ID</label>
+                            <input type="text" id="registerStudentId" placeholder="Student ID" maxlength="10" required />
+                        </div>
+
+                        <div class="field">
+                            <label for="registerMobile">Mobile Number</label>
+                            <input type="text" id="registerMobile" placeholder="Mobile Number" maxlength="11" oninput="this.value = this.value.replace(/[^0-9]/g, '');" required />
+                        </div>
+
+                        <!-- Row 3: Gender | Course / Department -->
+                        <div class="field">
+                            <label for="registerGender">Gender</label>
+                            <select id="registerGender" required>
+                                <option value="" disabled selected>Select Gender</option>
+                                <option value="Male">Male</option>
+                                <option value="Female">Female</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+
+                        <div class="field">
+                            <label for="registerCourse" id="registerCourseLabel">Course</label>
+                            <select id="registerCourse" required>
+                                <option value="">Select Course</option>
+                                <optgroup label="CLAS">
+                                    <option value="BA POS">BA POS</option>
+                                    <option value="BA COMM">BA COMM</option>
+                                    <option value="BPA">BPA</option>
+                                    <option value="BSCS">BSCS</option>
+                                    <option value="BSEMC">BSEMC</option>
+                                    <option value="BSIS">BSIS</option>
+                                    <option value="BSIT">BSIT</option>
+                                    <option value="BS MATH">BS MATH</option>
+                                    <option value="BS PSY">BS PSY</option>
+                                </optgroup>
+                                <optgroup label="CBA">
+                                    <option value="BSA">BSA</option>
+                                    <option value="BSAIS">BSAIS</option>
+                                    <option value="BSBA FMGT">BSBA FMGT</option>
+                                    <option value="BSBA MKTG">BSBA MKTG</option>
+                                    <option value="BSBA HRM">BSBA HRM</option>
+                                    <option value="BSE ENTREP">BSE ENTREP</option>
+                                    <option value="BSHM">BSHM</option>
+                                    <option value="BSOA">BSOA</option>
+                                    <option value="BSTM">BSTM</option>
+                                </optgroup>
+                                <optgroup label="CE">
+                                    <option value="BSE ENG">BSE ENG</option>
+                                    <option value="BSE ENG-CHI">BSE ENG-CHI</option>
+                                    <option value="BSE SCI">BSE SCI</option>
+                                    <option value="BTLED HE">BTLED HE</option>
+                                    <option value="BECED">BECED</option>
+                                    <option value="CPE">CPE</option>
+                                </optgroup>
+                                <optgroup label="CCJE">
+                                    <option value="BS Crim">BS Crim</option>
+                                    <option value="BSISM">BSISM</option>
+                                </optgroup>
+                                <optgroup label="Departments" hidden>
+                                    <option value="College">College</option>
+                                    <option value="Graduate School">Graduate School</option>
+                                    <option value="College of Law">College of Law</option>
+                                </optgroup>
+                            </select>
+                        </div>
+
+                        <!-- Row 4: Email Address (full width) -->
+                        <div class="field full">
+                            <label for="registerEmail">Email Address</label>
+                            <input type="email" id="registerEmail" placeholder="Email Address" required />
+                        </div>
+
+                        <!-- Row 5: Password (full width) -->
+                        <div class="field full">
+                            <label for="registerPassword">Password</label>
+                            <div class="password-field">
+                                <input type="password" id="registerPassword" placeholder="Enter your password" required />
+
+                                <button type="button" class="toggle-password" id="toggleRegPassword">Show</button>
+                            </div>
+                        </div>
+
+                        <!-- Row 6: Year Level | Section (Student only) -->
+                        <div class="field dynamic-field" id="yearLevelField">
+                            <label for="registerYearLevel">Year Level</label>
+                            <select id="registerYearLevel" required>
+                                <option value="">Select Year</option>
+                                <option value="1">1st Year</option>
+                                <option value="2">2nd Year</option>
+                                <option value="3">3rd Year</option>
+                                <option value="4">4th Year</option>
+                            </select>
+                        </div>
+
+                        <div class="field dynamic-field" id="sectionField">
+                            <label for="registerSection">Section</label>
+                            <select id="registerSection" required>
+                                <option value="">Select Section</option>
+                                <option value="A">A</option>
+                                <option value="B">B</option>
+                                <option value="C">C</option>
+                                <option value="D">D</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="field full">
+                        <div class="terms-agreement">
+                            <input type="checkbox" id="registerTerms" required>
+                            <label for="registerTerms">
+                                I agree to the <a href="terms.html" target="_blank">Terms &amp; Conditions</a>
+                                and <a href="privacy.html" target="_blank">Privacy Policy</a>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="field full">
+                        <div id="registerTurnstile" aria-label="Human verification"></div>
+                        <p id="registerTurnstileStatus" class="auth-desc" role="status" aria-live="polite" style="margin: 0.35rem 0 0;"></p>
+                    </div>
+
+                    <button type="submit" class="main-btn compact-btn"><span>Create Account</span></button>
+
+                    <p class="bottom-text compact-bottom">
+                        Already have an account?
+                        <a href="login.html">Login</a>
+                    </p>
+                </form>
+            </div>
+        </section>
+    </main>
+
+    <script src="assets/js/app.js?v=20261020-turnstile-1"></script>
+    <script src="assets/js/auth-slider.js"></script>
+    <script src="assets/js/auth.js?v=20261020-turnstile-2"></script>
+    <script>
+        const grid = document.querySelector('.register-grid');
+        grid.innerHTML = `
+            <input id="registerRole" type="hidden" value="resident">
+            <div class="field"><label for="registerFirstName">First name</label><input id="registerFirstName" required autocomplete="given-name"></div>
+            <div class="field"><label for="registerMiddleName">Middle name</label><input id="registerMiddleName" autocomplete="additional-name"></div>
+            <div class="field"><label for="registerLastName">Last name</label><input id="registerLastName" required autocomplete="family-name"></div>
+            <div class="field"><label for="registerSuffix">Suffix</label><input id="registerSuffix" placeholder="Jr., Sr., III"></div>
+            <div class="field"><label for="registerSex">Sex</label><select id="registerSex" required><option value="">Select sex</option><option>Female</option><option>Male</option><option>Other</option></select></div>
+            <div class="field"><label for="registerDateOfBirth">Date of birth</label><input id="registerDateOfBirth" type="date" required></div>
+            <div class="field"><label for="registerBirthplace">Birthplace</label><input id="registerBirthplace" required></div>
+            <div class="field"><label for="registerHouseNo">House number</label><input id="registerHouseNo" required></div>
+            <div class="field"><label for="registerStreet">Street</label><input id="registerStreet" required></div>
+            <div class="field"><label for="registerBarangayNo">Barangay number</label><input id="registerBarangayNo" required></div>
+            <div class="field"><label for="registerCity">City</label><input id="registerCity" required></div>
+            <div class="field"><label for="registerMobile">Phone number</label><input id="registerMobile" type="tel" maxlength="11" pattern="[0-9]{11}" inputmode="numeric" required></div>
+            <div class="field"><label for="registerUsername">Desired username</label><input id="registerUsername" minlength="3" maxlength="30" autocomplete="username" required></div>
+            <div class="field"><label for="registerEmail">Email address</label><input id="registerEmail" type="email" autocomplete="email" required></div>
+            <div class="field"><label for="registerPassword">Password</label><div class="password-field"><input id="registerPassword" type="password" minlength="6" autocomplete="new-password" required><button type="button" class="toggle-password" id="toggleRegPassword">Show</button></div></div>
+            <div class="field full"><p class="auth-desc">Additional information</p>
+                <label class="terms-agreement"><input id="registerPwd" type="checkbox"> Person with disability (PWD)</label>
+                <label class="terms-agreement"><input id="registerSoloParent" type="checkbox"> Solo parent</label>
+                <label class="terms-agreement"><input id="register4ps" type="checkbox"> 4Ps member</label>
+                <label class="terms-agreement"><input id="registerRegisteredVoter" type="checkbox"> Registered voter</label>
+                <label for="registerVoterId">Voter ID number</label><input id="registerVoterId" autocomplete="off">
+            </div>`;
+        document.getElementById('registerRegisteredVoter').addEventListener('change', event => {
+            document.getElementById('registerVoterId').required = event.target.checked;
+        });
+        document.getElementById('toggleRegPassword').addEventListener('click', event => {
+            const input = document.getElementById('registerPassword');
+            input.type = input.type === 'password' ? 'text' : 'password';
+            event.currentTarget.textContent = input.type === 'password' ? 'Show' : 'Hide';
+        });
+    </script>
+</body>
+
+</html>

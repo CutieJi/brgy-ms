@@ -1,0 +1,5950 @@
+let currentAdmin = null;
+let currentAdminData = null;
+let adminNotificationCounts = { borrowings: 0, currentBorrowed: 0, users: 0, incidents: 0 };
+let lastAutoSuspendCheckAt = 0;
+let autoSuspendCheckInProgress = false;
+
+let pendingBorrowApproval = null;
+let pendingBorrowApprovalName = null;
+let pendingBorrowStaffPhoto = '';
+let studentIdCaptureImage = '';
+let studentIdCameraStream = null;
+let staffFaceCameraStream = null;
+let staffFaceCaptureImage = '';
+let resolveStaffFaceCapture = null;
+let returnItemCameraStream = null;
+let returnItemCaptureImage = '';
+let resolveReturnItemCapture = null;
+let currentEquipmentList = [];
+const selectedReturnConditions = new Map();
+let borrowingLogDetails = [];
+
+async function readFileAsBase64(file, maxWidth = 400, maxHeight = 400) {
+    if (typeof window.resizeImage === 'function') {
+        return window.resizeImage(file, maxWidth, maxHeight);
+    }
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const { user, userData } = await checkAuth('official');
+        currentAdmin = user;
+        currentAdminData = userData;
+        initializeTheme();
+        window.initializeBarangayDashboard(user, userData);
+    } catch (error) {
+        console.warn('Official authorization pending or failed. Waiting for redirect...', error);
+    }
+});
+
+function initializeUserManagement() {
+    const roleSelect = document.getElementById('newUserRole');
+    const additionalFields = document.getElementById('additionalStudentFields');
+
+    if (roleSelect) {
+        roleSelect.addEventListener('change', (e) => {
+            const isStudent = e.target.value === 'student';
+            if (additionalFields) additionalFields.style.display = isStudent ? 'block' : 'none';
+
+            const sId = document.getElementById('newUserStudentId');
+            const sMobile = document.getElementById('newUserMobile');
+            const sCourse = document.getElementById('newUserCourse');
+            const sYear = document.getElementById('newUserYearLevel');
+            const sSection = document.getElementById('newUserSection');
+            if (sId) sId.required = isStudent;
+            if (sMobile) sMobile.required = isStudent;
+            if (sCourse) sCourse.required = isStudent;
+            if (sYear) sYear.required = isStudent;
+            if (sSection) sSection.required = isStudent;
+            window.updateRequiredAsterisks?.();
+        });
+    }
+
+    const editRoleSelect = document.getElementById('editUserRole');
+    const editStudentContainer = document.getElementById('editStudentFieldsContainers');
+    if (editRoleSelect && editStudentContainer) {
+        editRoleSelect.addEventListener('change', (e) => {
+            const isStudent = e.target.value === 'student';
+            editStudentContainer.style.display = isStudent ? 'block' : 'none';
+
+            const sId = document.getElementById('editUserStudentId');
+            const sMobile = document.getElementById('editUserMobile');
+            const sCourse = document.getElementById('editUserCourse');
+            const sYear = document.getElementById('editUserYearLevel');
+            const sSection = document.getElementById('editUserSection');
+            if (sId) sId.required = isStudent;
+            if (sMobile) sMobile.required = isStudent;
+            if (sCourse) sCourse.required = isStudent;
+            if (sYear) sYear.required = isStudent;
+            if (sSection) sSection.required = isStudent;
+            window.updateRequiredAsterisks?.();
+        });
+    }
+
+    const addUserForm = document.getElementById('addUserForm');
+    if (addUserForm) {
+        addUserForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await createNewUser();
+        });
+    }
+
+    const closeAddUserModal = document.getElementById('closeAddUserModal');
+    const cancelAddUser = document.getElementById('cancelAddUser');
+    const addUserModal = document.getElementById('addUserModal');
+
+    const closeAddUser = () => {
+        addUserModal?.classList.remove('active');
+        addUserForm?.reset();
+        if (additionalFields) additionalFields.style.display = 'none';
+    };
+
+    if (closeAddUserModal) closeAddUserModal.addEventListener('click', closeAddUser);
+    if (cancelAddUser) cancelAddUser.addEventListener('click', closeAddUser);
+}
+
+function initializeRealtimeListeners() {
+    db.collection('borrowings')
+        .where('status', 'in', ['pending_borrow', 'pending_return', 'pending_extension'])
+        .onSnapshot((snapshot) => {
+            // Count unique groups for a consistent experience
+            const groups = new Set();
+            const approvalGroups = new Set();
+            let extensionCount = 0;
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                if (data.status === 'pending_borrow') {
+                    const groupId = data.submissionId || doc.id;
+                    groups.add(groupId);
+                    approvalGroups.add(groupId);
+                } else {
+                    // Returns and extensions are typically individual
+                    groups.add(doc.id);
+                    if (data.status === 'pending_return') {
+                        approvalGroups.add(doc.id);
+                    } else if (data.status === 'pending_extension') {
+                        extensionCount++;
+                    }
+                }
+            });
+
+            const count = groups.size;
+            const dashPendingCount = document.getElementById('pendingRequestsCount');
+
+            adminNotificationCounts.borrowings = count;
+            updateAdminNotificationBadge();
+            updateNavigationCountBadges('approvals', approvalGroups.size);
+            updateNavigationCountBadges('extensions', extensionCount);
+            if (dashPendingCount) {
+                dashPendingCount.textContent = count;
+            }
+
+            const activeView = document.querySelector('.view-container.active')?.id;
+            if (activeView === 'approvalsView') {
+                loadPendingRequests();
+            }
+        }, error => console.error('Failed to update pending approval counts:', error));
+
+    db.collection('borrowings')
+        .where('status', 'in', ['borrowed', 'pending_return'])
+        .onSnapshot(snapshot => {
+            adminNotificationCounts.currentBorrowed = snapshot.docs.filter(doc => doc.data().status === 'borrowed').length;
+            updateAdminNotificationBadge();
+            updateNavigationCountBadges('borrowed', adminNotificationCounts.currentBorrowed);
+        }, error => console.error('Failed to update currently borrowed counts:', error));
+
+    db.collection('users')
+        .where('status', '==', 'pending')
+        .onSnapshot((snapshot) => {
+            const count = snapshot.size;
+            adminNotificationCounts.users = count;
+            updateAdminNotificationBadge();
+            updateNavigationCountBadges('users', count);
+            const badge = document.getElementById("pendingCount");
+            if (badge) badge.textContent = count;
+
+            const activeView = document.querySelector('.view-container.active')?.id;
+            if (activeView === 'usersView') {
+                loadPending();
+            }
+        }, error => console.error('Failed to update pending user counts:', error));
+
+    // Real-time Pending Incidents Badge
+    db.collection('incidents')
+        .where('status', 'in', ['pending', 'under_review'])
+        .onSnapshot((snapshot) => {
+            const count = snapshot.size;
+            adminNotificationCounts.incidents = count;
+            updateAdminNotificationBadge();
+            const activeView = document.querySelector('.view-container.active')?.id;
+            if (activeView === 'incidentsView') {
+                loadAllIncidents();
+            }
+        }, error => console.error('Failed to update incident counts:', error));
+}
+
+function updateNavigationCountBadges(key, count) {
+    document.querySelectorAll(`[data-count-for="${key}"]`).forEach(badge => {
+        const hasCount = count > 0;
+        badge.textContent = count > 99 ? '99+' : String(count);
+        badge.hidden = !hasCount;
+        badge.style.display = hasCount ? '' : 'none';
+    });
+}
+
+function initializeDashboard() {
+    window.refreshNotificationDropdown?.();
+    updateAdminInfo();
+    watchUserProfile(currentAdmin.uid, userData => {
+        currentAdminData = { ...currentAdminData, ...userData };
+        updateAdminInfo();
+    });
+    initializeNavigation();
+    startViewAutoRefresh(
+        () => document.querySelector('.view-container.active')?.id.replace(/View$/, ''),
+        {
+            dashboard: loadDashboardData,
+            equipment: loadAllEquipment,
+            approvals: loadPendingRequests,
+            borrowed: loadCurrentlyBorrowed,
+            logs: loadBorrowingLogs,
+            staffNames: loadAdminStaffNames,
+            users: async () => {
+                await Promise.all([loadUsers(), loadPending()]);
+            },
+            incidents: loadAllIncidents
+        }
+    );
+    loadDashboardData();
+    setInterval(() => {
+        if (!document.hidden) checkAllUsersForAutoSuspend();
+    }, 60_000);
+    initializeEquipmentManagement();
+    initializeUserManagement();
+    initializeLogout();
+    initializeExport();
+    initializeProfileDropdown();
+    initializeTheme();
+    initializeStudentIdCaptureModal();
+    initializeStaffFaceCaptureModal();
+    initializeReturnItemPhotoModal();
+    initializeImageZoomModal();
+    initializeRealtimeListeners();
+    checkIncidentAccess();
+}
+
+function checkIncidentAccess() {
+    const isHead = isHeadAdmin();
+    const incidentsSidebarItem = document.getElementById('incidentsSidebarItem');
+    const incidentsSidebarItemMobile = document.querySelector('.bottom-nav-item[data-view="incidents"]');
+    const profilePrivilegeSection = document.getElementById('profileHeadAdminToggleSection');
+    const privilegeControls = document.querySelectorAll('#newUserIsHeadAdmin, #editUserIsHeadAdmin');
+
+    if (incidentsSidebarItem) {
+        incidentsSidebarItem.style.display = isHead ? 'block' : 'none';
+    }
+    if (incidentsSidebarItemMobile) {
+        incidentsSidebarItemMobile.style.display = isHead ? 'flex' : 'none';
+    }
+    if (profilePrivilegeSection) {
+        profilePrivilegeSection.style.display = isHead ? '' : 'none';
+    }
+    privilegeControls.forEach(control => {
+        const field = control.closest('.edit-user-admin-privileges');
+        if (field) field.style.display = isHead ? '' : 'none';
+    });
+
+    if (!isHead) {
+        // If they are currently on incidents view, redirect to dashboard
+        const activeView = localStorage.getItem('admin-active-view');
+        if (activeView === 'incidents') {
+            window.switchView('dashboard');
+        }
+    }
+}
+
+function isHeadAdmin() {
+    if (!currentAdmin) return false;
+
+    if (currentAdminData?.isHeadAdmin !== undefined && currentAdminData?.isHeadAdmin !== null) {
+        return currentAdminData.isHeadAdmin === true || currentAdminData.isHeadAdmin === 'true';
+    }
+    if (currentAdminData?.adminType) {
+        return currentAdminData.adminType === 'head_admin';
+    }
+
+    // Default initial head admin emails (backward compatibility & first-time setup)
+    const headEmails = ['uccmislend@gmail.com', 'efrenpvictoria@gmail.com', 'teodoroamacaraeg@gmail.com', 'admin@cs1a.com'];
+    if (headEmails.includes(currentAdmin.email?.toLowerCase())) {
+        return true;
+    }
+
+    return false;
+}
+
+function updateAdminInfo() {
+    const email = currentAdmin.email || '';
+    const name = currentAdminData?.name || 'Administrator';
+    const photoURL = currentAdminData?.photoURL || window.DEFAULT_PROFILE_IMAGE;
+    const isHead = isHeadAdmin();
+
+    // Update emails
+    ['adminEmail', 'topbarAdminEmail', 'profileViewEmail', 'profilePageEmail'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = email;
+    });
+
+    // Update avatars
+    const containers = ['sidebarAvatarContainer', 'topbarAvatarContainer', 'menuAvatarContainer', 'profileViewAvatarContainer', 'profilePageAvatar'];
+    containers.forEach(id => {
+        const container = document.getElementById(id);
+        if (!container) return;
+
+        container.innerHTML = `<img src="${photoURL}" alt="${name}" style="width: 100%; height: 100%; object-fit: contain;">`;
+    });
+
+    // Update names
+    const nameEls = document.querySelectorAll('.profile-menu-name, .topbar-user-name, .profile-view-name, .sidebar-user-name, #profilePageName');
+    nameEls.forEach(el => {
+        el.textContent = name;
+    });
+    const nameParts = name.trim().split(/\s+/).filter(Boolean);
+    const profilePageFirstName = document.getElementById('profilePageFirstName');
+    const profilePageLastName = document.getElementById('profilePageLastName');
+    if (profilePageFirstName) profilePageFirstName.textContent = currentAdminData?.firstName || nameParts[0] || '—';
+    if (profilePageLastName) profilePageLastName.textContent = currentAdminData?.lastName || nameParts.slice(1).join(' ') || '—';
+
+    // Update role badge in Profile Modal
+    const roleBadge = document.getElementById('profileViewRoleBadge');
+    if (roleBadge) {
+        roleBadge.className = `badge ${isHead ? 'badge-primary' : 'badge-category'}`;
+        roleBadge.textContent = isHead ? 'Head Admin' : 'Admin';
+    }
+
+    const profilePageRole = document.getElementById('profilePageRole');
+    const profilePageAccountType = document.getElementById('profilePageAccountType');
+    const profilePageAccessStatus = document.getElementById('profilePageAccessStatus');
+    const profilePageAccessDescription = document.getElementById('profilePageAccessDescription');
+    if (profilePageRole) profilePageRole.textContent = isHead ? 'Head Admin' : 'Administrator';
+    if (profilePageAccountType) profilePageAccountType.textContent = isHead ? 'Head Administrator' : 'Administrator';
+    if (profilePageAccessStatus) profilePageAccessStatus.textContent = isHead ? 'Enabled' : 'Standard access';
+    if (profilePageAccessDescription) {
+        profilePageAccessDescription.textContent = isHead
+            ? 'Can access Incident Reports and official report generation.'
+            : 'Can manage MISLend equipment and borrowing records.';
+    }
+
+    // Update Head Admin quick toggle in Profile Modal
+    const toggleBtn = document.getElementById('toggleMyHeadAdminBtn');
+    const statusText = document.getElementById('profileHeadAdminStatusText');
+    if (toggleBtn) {
+        toggleBtn.textContent = isHead ? 'Revoke Access' : 'Grant Access';
+        toggleBtn.className = `btn btn-sm ${isHead ? 'btn-secondary' : 'btn-primary'}`;
+    }
+    if (statusText) {
+        statusText.innerHTML = isHead 
+            ? '<span style="color: #10b981; font-weight: 600;">✓ Active</span> — Full access to Incident Reports' 
+            : '<span style="color: var(--text-tertiary);">Inactive</span> — Click to enable full Report access';
+    }
+}
+
+function openAdminProfileModal() {
+    const data = currentAdminData || {};
+    const nameParts = (data.name || '').trim().split(/\s+/).filter(Boolean);
+    const firstName = document.getElementById('adminProfileFirstName');
+    const lastName = document.getElementById('adminProfileLastName');
+    const email = document.getElementById('adminProfileEmail');
+
+    if (firstName) firstName.value = data.firstName || nameParts[0] || '';
+    if (lastName) lastName.value = data.lastName || nameParts.slice(1).join(' ') || '';
+    if (email) email.value = currentAdmin?.email || data.email || '';
+    document.getElementById('profileModal')?.classList.add('active');
+}
+
+async function saveAdminProfile() {
+    if (!currentAdmin) {
+        showToast('Unable to identify the current admin account.', 'error');
+        return;
+    }
+
+    const firstName = document.getElementById('adminProfileFirstName')?.value.trim() || '';
+    const lastName = document.getElementById('adminProfileLastName')?.value.trim() || '';
+    if (!firstName || !lastName) {
+        showToast('Enter both your first and last name.', 'error');
+        return;
+    }
+
+    const saveButton = document.getElementById('saveAdminProfileBtn');
+    if (!saveButton) {
+        showToast('Profile save button is unavailable. Please refresh and try again.', 'error');
+        return;
+    }
+
+    const originalText = saveButton.textContent;
+    const middleInitial = currentAdminData?.middleInitial || '';
+    const name = `${firstName} ${middleInitial ? `${middleInitial.replace(/\.$/, '')}. ` : ''}${lastName}`;
+    saveButton.disabled = true;
+    saveButton.textContent = 'Saving...';
+
+    try {
+        const updateData = { firstName, lastName, middleInitial, name };
+        await db.collection('users').doc(currentAdmin.uid).update(updateData);
+        currentAdminData = { ...currentAdminData, ...updateData };
+        updateAdminInfo();
+        document.getElementById('profileModal')?.classList.remove('active');
+        showToast('Profile updated successfully.', 'success');
+    } catch (error) {
+        console.error('Failed to update admin profile:', error);
+        showToast(`Failed to update profile: ${error.message}`, 'error');
+    } finally {
+        saveButton.disabled = false;
+        saveButton.textContent = originalText;
+    }
+}
+
+async function toggleCurrentAdminHeadStatus() {
+    if (!currentAdmin) return;
+    if (!isHeadAdmin()) {
+        showToast('Only a Head Admin can grant or revoke Head Admin access.', 'error');
+        return;
+    }
+    const currentStatus = isHeadAdmin();
+    const newStatus = !currentStatus;
+
+    try {
+        await db.collection('users').doc(currentAdmin.uid).update({
+            isHeadAdmin: newStatus
+        });
+
+        if (currentAdminData) {
+            currentAdminData.isHeadAdmin = newStatus;
+        }
+
+        checkIncidentAccess();
+        updateAdminInfo();
+        if (typeof loadUsers === 'function') loadUsers();
+
+        showToast(newStatus ? 'Head Admin privileges granted! Incident Reports enabled.' : 'Head Admin privileges revoked.', 'success');
+    } catch (err) {
+        console.error('Error toggling head admin status:', err);
+        showToast('Failed to update privileges: ' + err.message, 'error');
+    }
+}
+window.toggleCurrentAdminHeadStatus = toggleCurrentAdminHeadStatus;
+
+function initializeNavigation() {
+    const navItems = document.querySelectorAll('.nav-item');
+    const sidebarItems = document.querySelectorAll('.sidebar-item');
+    const views = document.querySelectorAll('.view-container');
+    const breadcrumbCurrent = document.getElementById('breadcrumbCurrent');
+    const breadcrumbSection = document.getElementById('breadcrumbSection');
+
+    const viewLabels = {
+        dashboard: 'Dashboard',
+        equipment: 'Manage Equipment',
+        approvals: 'Pending Approvals',
+        borrowed: 'Currently Borrowed',
+        logs: 'Borrowing Logs',
+        staffNames: 'Approval Staff Names',
+        users: 'User Management',
+        incidents: 'Incident Reports',
+        history: 'Audit History',
+        profile: 'User Profile'
+    };
+
+    function activateView(viewId) {
+        if (viewId === 'incidents' && !isHeadAdmin()) {
+            showToast('Access Denied: Only the Head Admin can access Incident Reports.', 'error');
+            return;
+        }
+
+        navItems.forEach(nav => nav.classList.remove('active'));
+        sidebarItems.forEach(si => si.classList.remove('active'));
+        views.forEach(view => view.classList.remove('active'));
+
+        // Bottom nav support
+        const bottomNavItems = document.querySelectorAll('.bottom-nav-item');
+        bottomNavItems.forEach(bi => bi.classList.remove('active'));
+
+        const matchingNav = document.querySelector(`.nav-item[data-view="${viewId}"]`);
+        if (matchingNav) {
+            matchingNav.classList.add('active');
+            const parentLi = matchingNav.closest('.sidebar-item');
+            if (parentLi) parentLi.classList.add('active');
+        }
+
+        const matchingBottom = document.querySelector(`.bottom-nav-item[data-view="${viewId}"]`);
+        if (matchingBottom) matchingBottom.classList.add('active');
+
+        const targetView = document.getElementById(`${viewId}View`);
+        if (!targetView) return;
+        targetView.classList.add('active');
+
+        const label = viewLabels[viewId] || viewId;
+        const sidebarMenu = matchingNav?.closest('.sidebar-menu-inner');
+        const menuLabel = sidebarMenu?.previousElementSibling;
+        if (breadcrumbSection && menuLabel?.classList.contains('sidebar-menu-label')) {
+            const sectionLabel = menuLabel.textContent.trim().toLowerCase()
+                .replace(/\b[a-z]/g, letter => letter.toUpperCase());
+            breadcrumbSection.lastChild.textContent = ` ${sectionLabel}`;
+        }
+        if (breadcrumbCurrent) breadcrumbCurrent.textContent = label;
+        const mobileTitle = document.getElementById('topbarMobileTitle');
+        if (mobileTitle) mobileTitle.textContent = label;
+
+        if (viewId === 'dashboard') loadDashboardData();
+        else if (viewId === 'equipment') loadAllEquipment();
+        else if (viewId === 'approvals') loadPendingRequests();
+        else if (viewId === 'borrowed') loadCurrentlyBorrowed();
+        else if (viewId === 'logs') loadBorrowingLogs();
+        else if (viewId === 'staffNames') loadAdminStaffNames();
+        else if (viewId === 'users') { loadUsers(); loadPending(); }
+        else if (viewId === 'incidents') loadAllIncidents();
+
+        try { localStorage.setItem('admin-active-view', viewId); } catch (e) { }
+
+        if (window.innerWidth < 1280) {
+            document.getElementById('sidebar')?.classList.remove('mobile-open');
+            document.getElementById('sidebarOverlay')?.classList.remove('active');
+        }
+    }
+
+    navItems.forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            activateView(item.getAttribute('data-view'));
+        });
+    });
+
+    const bottomNavItems = document.querySelectorAll('.bottom-nav-item');
+    bottomNavItems.forEach(item => {
+        item.addEventListener('click', (e) => {
+            const view = item.getAttribute('data-view');
+            if (!view) return;
+            e.preventDefault();
+            activateView(view);
+        });
+    });
+
+    const bottomNavProfile = document.getElementById('bottomNavProfile');
+    if (bottomNavProfile) {
+        bottomNavProfile.addEventListener('click', (e) => {
+            e.preventDefault();
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            if (sidebar && overlay) {
+                sidebar.classList.add('mobile-open');
+                overlay.classList.add('active');
+                // Ensure sidebar is visible for this "Drawer" interaction
+                sidebar.style.display = 'flex';
+                sidebar.style.setProperty('display', 'flex', 'important');
+            }
+        });
+    }
+
+    // Export globally for onclick handlers
+    window.switchView = activateView;
+
+
+    const saved = (() => { try { return localStorage.getItem('admin-active-view'); } catch (e) { return null; } })();
+    if (saved && document.getElementById(`${saved}View`)) {
+        activateView(saved);
+    } else {
+        activateView('dashboard');
+    }
+}
+
+function initializeSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const topbarToggle = document.getElementById('topbarToggle');
+    const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+    const sidebarOverlay = document.getElementById('sidebarOverlay');
+
+    function toggleSidebar() {
+        if (window.innerWidth < 1280) {
+            sidebar.classList.toggle('mobile-open');
+            sidebarOverlay.classList.toggle('active');
+        } else {
+            sidebar.classList.toggle('collapsed');
+        }
+    }
+
+    if (topbarToggle) topbarToggle.addEventListener('click', toggleSidebar);
+    if (sidebarToggleBtn) sidebarToggleBtn.addEventListener('click', toggleSidebar);
+
+    if (sidebarOverlay) {
+        sidebarOverlay.addEventListener('click', () => {
+            sidebar.classList.remove('mobile-open');
+            sidebarOverlay.classList.remove('active');
+        });
+    }
+
+    window.addEventListener('resize', () => {
+        if (window.innerWidth >= 1280) {
+            sidebar.classList.remove('mobile-open');
+            sidebarOverlay.classList.remove('active');
+        }
+    });
+}
+
+async function loadDashboardData() {
+    try {
+        const recentActivitiesPromise = loadRecentActivities();
+        const overdueItemsPromise = loadOverdueItems();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const [equipmentSnapshot, usersSnapshot, todayBorrowsSnapshot, allBorrowsSnapshot] = await Promise.all([
+            db.collection('equipment').get(),
+            db.collection('users').get(),
+            db.collection('borrowings')
+                .where('borrowedAt', '>=', today)
+                .get(),
+            db.collection('borrowings').get()
+        ]);
+        const equipment = equipmentSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const users = usersSnapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .filter(u => u.status === 'approved');
+
+        const totalEquipment = equipment.length;
+        const availableEquipment = equipment.filter(e => e.status === 'available').length;
+        const totalUsers = users.length;
+        const todayBorrows = todayBorrowsSnapshot.size;
+        const totalHistoricalBorrows = allBorrowsSnapshot.size;
+
+        document.getElementById('totalEquipment').textContent = totalEquipment;
+        document.getElementById('availableEquipment').textContent = availableEquipment;
+        document.getElementById('todayBorrows').textContent = todayBorrows;
+        document.getElementById('totalHistoricalBorrows').textContent = totalHistoricalBorrows;
+        document.getElementById('totalUsers').textContent = totalUsers;
+
+        await Promise.all([recentActivitiesPromise, overdueItemsPromise]);
+
+        if (window.syncDashboardCharts) {
+            window.syncDashboardCharts();
+        }
+
+
+    } catch (error) {
+        console.error('Error loading dashboard data:', error);
+    }
+}
+
+async function loadRecentActivities() {
+    const activitiesList = document.getElementById('recentActivities');
+    if (!activitiesList) return;
+
+    try {
+        const snapshot = await db.collection('borrowings').get();
+        const toMillis = value => {
+            if (!value) return 0;
+            if (typeof value.toMillis === 'function') return value.toMillis();
+            if (typeof value.toDate === 'function') return value.toDate().getTime();
+            const timestamp = new Date(value).getTime();
+            return Number.isNaN(timestamp) ? 0 : timestamp;
+        };
+        const activityLabels = {
+            borrowed: 'Borrowed',
+            pending_borrow: 'Borrow Request',
+            rejected: 'Borrow Request Rejected',
+            extended: 'Borrowing Extended',
+            return_requested: 'Return Requested',
+            returned: 'Returned'
+        };
+        const activities = snapshot.docs.flatMap(doc => {
+            const borrowing = { id: doc.id, ...doc.data() };
+            const events = window.getBorrowingActivityEvents(borrowing);
+            return events.map(event => ({
+                ...event,
+                equipmentName: borrowing.equipmentName || 'Equipment',
+                userName: borrowing.userName || 'Unknown User',
+                activityTime: event.at || borrowing.updatedAt || borrowing.borrowedAt || borrowing.createdAt
+            }));
+        }).sort((a, b) => toMillis(b.activityTime) - toMillis(a.activityTime)).slice(0, 5);
+
+        if (activities.length === 0) {
+            activitiesList.innerHTML = '<p style="color: var(--text-secondary);">No recent activities</p>';
+        } else {
+            activitiesList.innerHTML = activities.map(activity => `
+                <div class="transaction-item ${activity.type === 'returned' ? 'success' : 'warning'}">
+                    <div class="transaction-details">
+                        <div class="transaction-title">${activityLabels[activity.type] || 'Borrowing Activity'}: ${activity.equipmentName}</div>
+                        <div class="transaction-meta">${activity.userName}</div>
+                    </div>
+                    <div class="transaction-time">${formatDate(activity.activityTime)}</div>
+                </div>
+            `).join('');
+        }
+    } catch (error) {
+        console.error('Error loading activities:', error);
+    }
+}
+
+async function loadOverdueItems() {
+    const overdueList = document.getElementById('overdueList');
+    const sendAllRemindersBtn = document.getElementById('sendAllRemindersBtn');
+    if (!overdueList) return;
+
+    checkAllUsersForAutoSuspend();
+
+    try {
+        const now = new Date();
+
+        const snapshot = await db.collection('borrowings')
+            .where('status', 'in', ['borrowed', 'pending_extension', 'pending_return'])
+            .get();
+
+        const overdue = snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .map(item => ({
+                ...item,
+                overdueAt: window.getBorrowingDueAt(item.borrowedAt, item.expectedReturnTime)
+            }))
+            .filter(item => item.overdueAt && now > item.overdueAt)
+            .sort((a, b) => b.overdueAt - a.overdueAt);
+        if (sendAllRemindersBtn) {
+            sendAllRemindersBtn.style.display = overdue.length > 0 ? 'inline-flex' : 'none';
+            sendAllRemindersBtn.onclick = () => sendAllSMSReminders(overdue);
+        }
+
+        const sendAllEmailRemindersBtn = document.getElementById('sendAllEmailRemindersBtn');
+        if (sendAllEmailRemindersBtn) {
+            sendAllEmailRemindersBtn.style.display = overdue.length > 0 ? 'inline-flex' : 'none';
+            sendAllEmailRemindersBtn.onclick = () => sendAllEmailReminders(overdue);
+        }
+
+        if (overdue.length === 0) {
+            overdueList.innerHTML = `
+                <div class="alert-item success">
+                    <div class="alert-content">
+                        <div class="alert-title">All Clear</div>
+                        <div class="alert-message">No overdue items</div>
+                    </div>
+                </div>
+            `;
+        } else {
+            overdueList.innerHTML = overdue.map(item => {
+                const reminderStatus = [
+                    item.overdueEmailSentAt ? 'Email sent' : '',
+                    item.overdueSmsSentAt ? 'SMS sent' : ''
+                ].filter(Boolean).join(' · ') || 'Automatic reminders pending';
+                return `
+                <div class="alert-item warning">
+                    <div class="alert-content">
+                        <div class="alert-title">${item.equipmentName}</div>
+                        <div class="alert-message">
+                            Borrowed by ${item.userName} - Due: ${formatTimeTo12h(item.expectedReturnTime)}<br>
+                            <small style="opacity: 0.7; font-size: 0.7rem;">${reminderStatus}</small>
+                        </div>
+                    </div>
+                    <div class="alert-actions" style="margin-left: auto; display: flex; align-items: center; gap: 0.5rem;">
+                        <button class="btn btn-icon" onclick="sendSMSOverdue('${item.userId}', '${item.equipmentName}', '${item.id}')" title="Send SMS Reminder">
+                            <i class="fa-solid fa-comment-dots"></i>
+                        </button>
+                        <button class="btn btn-icon" onclick="sendEmailOverdue('${item.userId}', '${item.equipmentName}', '${item.id}')" title="Send Email Reminder">
+                            <i class="fa-solid fa-envelope"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+            }).join('');
+        }
+    } catch (error) {
+        console.error('Error loading overdue items:', error);
+        overdueList.innerHTML = `
+            <div class="alert-item warning">
+                <div class="alert-icon"><i class="fa-solid fa-triangle-exclamation" style="color: rgb(255, 212, 59);"></i></div>
+                <div class="alert-content">
+                    <div class="alert-title">Error</div>
+                    <div class="alert-message">Failed to load overdue list</div>
+                </div>
+            </div>
+        `;
+    }
+}
+
+async function checkAllUsersForAutoSuspend() {
+    const checkStartedAt = Date.now();
+    if (autoSuspendCheckInProgress || checkStartedAt - lastAutoSuspendCheckAt < 60_000) return;
+
+    autoSuspendCheckInProgress = true;
+    lastAutoSuspendCheckAt = checkStartedAt;
+    try {
+        const activeSnapshot = await db.collection('borrowings')
+            .where('status', 'in', ['borrowed', 'pending_extension', 'pending_return'])
+            .get();
+        
+        const historicalSnapshot = await db.collection('borrowings')
+            .where('wasOverdue', '==', true)
+            .get();
+
+        const strikeMap = {};
+        const now = new Date();
+
+        // Calculate current active overdues
+        activeSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            const due = window.getBorrowingDueAt(data.borrowedAt, data.expectedReturnTime);
+            if (data.userId && due && now > due) {
+                strikeMap[data.userId] = (strikeMap[data.userId] || 0) + 1;
+            }
+        });
+
+        // Calculate past overdues
+        historicalSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            if (data.userId && window.isOverdueStrikeActive(data, now)) {
+                strikeMap[data.userId] = (strikeMap[data.userId] || 0) + 1;
+            }
+        });
+
+        // Suspend users who hit 3 strikes
+        for (const [userId, count] of Object.entries(strikeMap)) {
+            if (count >= 3) {
+                const userRef = db.collection('users').doc(userId);
+                const userDoc = await userRef.get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    if (userData.status !== 'suspended' && userData.role === 'student') {
+                        const reason = `Your account was automatically suspended because you accumulated ${count} overdue strikes within the past month. Please contact the MIS office if you believe this is incorrect.`;
+                        const result = await auth.suspendAccount(userId, reason);
+                        if (result.emailSent) {
+                            showToast(`System auto-suspended ${userData.name} and emailed the overdue reason.`, 'warning');
+                        } else {
+                            showToast(`System auto-suspended ${userData.name}, but the email could not be sent: ${result.emailError || 'Email service unavailable.'}`, 'error');
+                        }
+                        if (typeof loadUsers === 'function') loadUsers();
+                    }
+                }
+            }
+        }
+    } catch (err) {
+        console.error("Auto-suspend error:", err);
+    } finally {
+        autoSuspendCheckInProgress = false;
+    }
+}
+
+async function sendAllSMSReminders(overdueItems) {
+    if (!overdueItems || overdueItems.length === 0) return;
+
+    const count = overdueItems.length;
+    if (!await showConfirm({
+        title: 'Batch SMS Reminders',
+        message: `This will send SMS reminders to ${count} borrowers using the configured SMS gateway. Continue?`,
+        confirmText: 'Continue',
+        type: 'primary'
+    })) return;
+
+    for (const item of overdueItems) {
+        await sendSMSOverdue(item.userId, item.equipmentName, item.id);
+        await new Promise(r => setTimeout(r, 800));
+    }
+}
+
+async function sendAllEmailReminders(overdueItems) {
+    if (!overdueItems || overdueItems.length === 0) return;
+
+    const count = overdueItems.length;
+    if (!await showConfirm({
+        title: 'Batch Email Reminders',
+        message: `This will send overdue email reminders to ${count} borrowers from the MISLend mail account. Continue?`,
+        confirmText: 'Continue',
+        type: 'primary'
+    })) return;
+
+    for (const item of overdueItems) {
+        await sendEmailOverdue(item.userId, item.equipmentName, item.id);
+        await new Promise(r => setTimeout(r, 1000));
+    }
+}
+
+
+
+async function loadPendingRequests() {
+    const pendingGrid = document.getElementById('pendingRequestsGrid');
+    const dashPendingCount = document.getElementById('pendingRequestsCount');
+
+    if (!pendingGrid) return;
+
+    try {
+
+        const [borrowSnapshot, returnSnapshot, extensionSnapshot] = await Promise.all([
+            db.collection('borrowings').where('status', '==', 'pending_borrow').get(),
+            db.collection('borrowings').where('status', '==', 'pending_return').get(),
+            db.collection('borrowings').where('status', '==', 'pending_extension').get()
+        ]);
+
+        const pBorrows = borrowSnapshot.docs.map(doc => ({ id: doc.id, type: 'borrow', ...doc.data() }));
+        const pReturns = returnSnapshot.docs.map(doc => ({ id: doc.id, type: 'return', ...doc.data() }));
+        const pExtensions = extensionSnapshot.docs.map(doc => ({ id: doc.id, type: 'extension', ...doc.data() }));
+
+        const groupedBorrows = {};
+        const individualPendingReturns = [...pReturns];
+
+        // Register for bulk actions to avoid JSON stringify in onclick
+        window.__pendingBulkStorage = {};
+
+        pBorrows.forEach(req => {
+            const submissionGroupId = req.submissionId || req.id;
+            if (!groupedBorrows[submissionGroupId]) {
+                groupedBorrows[submissionGroupId] = {
+                    ...req,
+                    items: []
+                };
+            }
+            groupedBorrows[submissionGroupId].items.push({
+                borrowingId: req.id,
+                equipmentId: req.equipmentId,
+                equipmentName: req.equipmentName,
+                equipmentCode: req.equipmentCode
+            });
+        });
+
+        const allPendingGrouped = [
+            ...Object.values(groupedBorrows),
+            ...individualPendingReturns,
+            ...pExtensions
+        ].sort((a, b) => {
+            const toMillis = value => {
+                if (value?.toMillis) return value.toMillis();
+                if (value?.toDate) return value.toDate().getTime();
+                const time = value ? new Date(value).getTime() : 0;
+                return Number.isNaN(time) ? 0 : time;
+            };
+            const timeA = toMillis(a.updatedAt || a.borrowedAt || a.createdAt);
+            const timeB = toMillis(b.updatedAt || b.borrowedAt || b.createdAt);
+            return timeB - timeA;
+        });
+
+        const count = allPendingGrouped.length;
+
+        if (dashPendingCount) {
+            dashPendingCount.textContent = count;
+        }
+
+        if (count === 0) {
+            pendingGrid.innerHTML = `
+                <div class="empty-state" style="grid-column: 1 / -1;">
+                    <div class="stat-icon" style="margin: 0 auto 1rem; width: 64px; height: 64px; background: rgba(16, 185, 129, 0.1); color: var(--success); display: flex; align-items: center; justify-content: center; border-radius: 50%;">
+                        <i class="fa-solid fa-check"></i>
+                    </div>
+                    <h3>All Caught Up!</h3>
+                    <p style="color: var(--text-secondary);">There are no pending requests requiring your attention.</p>
+                </div>
+            `;
+            return;
+        }
+
+        pendingGrid.innerHTML = allPendingGrouped.map(req => {
+            const isBorrow = req.type === 'borrow';
+            const isReturn = req.type === 'return';
+            const isExtension = req.type === 'extension';
+            const submissionGroupId = req.submissionId || req.id;
+
+            if (isExtension) {
+                const userName = req.userName || req.userEmail || 'Unknown Borrower';
+                const studentId = req.studentId || req.facultyId || 'N/A';
+                return `
+                    <div class="equipment-card" style="border-top: 4px solid #1e40af;">
+                        <div class="card-header">
+                            <div class="card-title-group">
+                                <h3 class="card-title">${req.equipmentName || 'Equipment'}</h3>
+                                <span class="card-subtitle">ID: ${req.equipmentCode || req.equipmentId || 'N/A'}</span>
+                            </div>
+                            <div class="stat-icon" style="background: rgba(30, 64, 175, 0.1); color: #1e40af; width: 32px; height: 32px;">
+                                <i class="fa-solid fa-clock"></i>
+                            </div>
+                        </div>
+                        <div class="card-details" style="margin: 1rem 0;">
+                            <div style="font-weight: 600; font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-primary);">
+                                Extension Request by:
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                                <div class="topbar-user-avatar" style="width: 24px; height: 24px; font-size: 0.7rem; background: var(--bg-secondary); color: var(--text-primary); overflow: hidden; display: flex; align-items: center; justify-content: center;">
+                                    ${req.userPhotoURL ? `<img src="${req.userPhotoURL}" alt="" style="width: 100%; height: 100%; object-fit: cover;">` : `<span>${userName.charAt(0).toUpperCase()}</span>`}
+                                </div>
+                                <div>
+                                    <div style="font-size: 0.875rem; font-weight: 500;">${userName}</div>
+                                    <div style="font-size: 0.75rem; color: var(--text-secondary);">${req.userEmail || studentId}</div>
+                                </div>
+                            </div>
+                            <div class="detail-row"><span>Current Due:</span><span>${formatTimeTo12h(req.expectedReturnTime)}</span></div>
+                            <div class="detail-row"><span>Borrowed:</span><span>${formatDate(req.borrowedAt)}</span></div>
+                            <div style="margin-top: 0.75rem; padding: 0.75rem; background: rgba(30, 64, 175, 0.05); border-radius: var(--radius-md); border: 1px dashed #1e40af;">
+                                <strong style="color: #1e40af;">New Requested Time:</strong>
+                                <span style="font-weight:700; color: #1e40af;">${formatTimeTo12h(req.requestedReturnTime)}</span><br>
+                                <strong style="color: #1e40af;">Reason:</strong> ${req.extensionReason || 'Not specified'}
+                            </div>
+                        </div>
+                        <div class="card-actions" style="margin-top: auto; display: flex; gap: 0.5rem;">
+                            <button class="btn btn-primary" style="flex:1;" onclick="approveExtension('${req.id}')">Approve Extension</button>
+                            <button class="btn btn-secondary" style="flex:1; border-color: var(--danger); color: var(--danger);" onclick="rejectExtension('${req.id}')">Reject</button>
+                        </div>
+                    </div>
+                `;
+            }
+
+            let actionColor = '#d4a017';
+            let actionBg = 'rgba(212, 160, 23, 0.12)';
+            let actionLabel = 'Borrow Request';
+            let icon = '<polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>';
+
+            if (isReturn) {
+                actionColor = 'var(--warning)';
+                actionBg = 'rgba(245, 158, 11, 0.1)';
+                actionLabel = 'Return Request';
+                icon = '<polyline points="9 10 4 15 9 20"></polyline><path d="M20 4v7a4 4 0 0 1-4 4H4"></path>';
+            }
+
+            // For grouped borrows (cart submissions)
+            const isBulk = isBorrow && req.items && req.items.length > 1;
+            const itemsListHtml = isBulk 
+                ? `<ul style="margin-top: 5px; list-style: none; padding-left: 0;">` + 
+                  req.items.map(it => `<li style="font-size: 0.85rem; margin-bottom: 3px;"><i class="fa-solid fa-cube" style="font-size: 0.7rem; opacity: 0.6;"></i> ${it.equipmentName} (${it.equipmentCode})</li>`).join('') + 
+                  `</ul>`
+                : '';
+
+            const equipmentDisplayName = isBulk ? `${req.items.length} Items Selected` : req.equipmentName;
+            const equipmentDisplayCode = isBulk ? 'Cart Submission' : `ID: ${req.equipmentCode}`;
+
+            let actionButtonsHtml = '';
+            if (isBorrow) {
+                const storageId = `bulk_${submissionGroupId}`;
+                window.__pendingBulkStorage[storageId] = req.items;
+                actionButtonsHtml = `
+                    <button class="btn btn-primary" style="flex: 1;" onclick="approveBorrowBulk('${storageId}')">Approve</button>
+                    <button class="btn btn-secondary" style="flex: 1; border-color: var(--danger); color: var(--danger);" onclick="rejectBorrowBulk('${storageId}')">Reject</button>
+                `;
+            } else {
+                actionButtonsHtml = `
+                    <button class="btn btn-primary" style="flex: 1;" onclick="approveReturn('${req.id}', '${req.equipmentId}', '${req.pendingReturnCondition}')">Approve</button>
+                    <button class="btn btn-secondary" style="flex: 1; border-color: var(--danger); color: var(--danger);" onclick="rejectReturn('${req.id}', '${req.equipmentId}')">Reject</button>
+                `;
+            }
+
+            return `
+                <div class="equipment-card" style="border-top: 4px solid ${actionColor}">
+                    <div class="card-header">
+                        <div class="card-title-group">
+                            <h3 class="card-title">${equipmentDisplayName}</h3>
+                            <span class="card-subtitle">${equipmentDisplayCode}</span>
+                        </div>
+                        <div class="stat-icon" style="background: ${actionBg}; color: ${actionColor}; width: 32px; height: 32px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                ${icon}
+                            </svg>
+                        </div>
+                    </div>
+                    
+                    <div class="card-details" style="margin: 1rem 0;">
+                        <div style="font-weight: 600; font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-primary);">
+                            ${actionLabel} by:
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+                            <div class="topbar-user-avatar" style="width: 24px; height: 24px; font-size: 0.7rem; background: var(--bg-secondary); color: var(--text-primary); overflow: hidden; display: flex; align-items: center; justify-content: center;">
+                                ${req.userPhotoURL ? `<img src="${req.userPhotoURL}" alt="" style="width: 100%; height: 100%; object-fit: cover;">` : `<span>${req.userName.charAt(0).toUpperCase()}</span>`}
+                            </div>
+                            <div>
+                                <div style="font-size: 0.875rem; font-weight: 500;">${req.userName}</div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary);">${req.studentId || req.facultyId || 'N/A'}</div>
+                            </div>
+                        </div>
+                        
+                        ${isBorrow ? `
+                            <div class="detail-row"><span>Requested:</span> <span>${formatDate(req.requestedAt || req.createdAt || req.borrowedAt)}</span></div>
+                            <div class="detail-row"><span>Room:</span> <span>${req.room || 'N/A'}</span></div>
+                            <div class="detail-row"><span>Purpose:</span> <span>${req.purpose || 'N/A'}</span></div>
+                            <div class="detail-row"><span>Duration:</span> <span>Until ${formatTimeTo12h(req.expectedReturnTime)}</span></div>
+                            ${itemsListHtml}
+                        ` : `
+                            <div class="detail-row"><span>Condition:</span> <span style="text-transform: capitalize;">${req.pendingReturnCondition || 'N/A'}</span></div>
+                            <div class="detail-row"><span>Notes:</span> <span style="font-style: italic;">${req.pendingReturnNotes || 'None'}</span></div>
+                            ${req.returnPhoto ? `<div style="margin-top:0.75rem;"><div style="font-size:0.8rem;font-weight:600;margin-bottom:0.35rem;">Item Return Photo</div><img src="${escapeBorrowingHistoryHtml(req.returnPhoto)}" alt="Photo of returned ${escapeBorrowingHistoryHtml(req.equipmentName || 'equipment')}" data-zoom-src="${escapeBorrowingHistoryHtml(req.returnPhoto)}" style="width:min(100%,280px);max-height:180px;object-fit:contain;border-radius:var(--radius-md);cursor:zoom-in;"></div>` : '<div class="detail-row">Return photo: Not available</div>'}
+                        `}
+                    </div>
+
+                    <div class="card-actions" style="margin-top: auto; display: flex; gap: 0.5rem;">
+                        ${actionButtonsHtml}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    } catch (error) {
+        console.error('Error loading pending requests:', error);
+        pendingGrid.innerHTML = `
+            <div class="empty-state" style="grid-column: 1 / -1;">
+                <div class="alert-item warning">
+                    <div class="alert-icon"><i class="fa-solid fa-triangle-exclamation" style="color: rgb(255, 212, 59);"></i></div>
+                    <div class="alert-content">
+                        <div class="alert-title">Error</div>
+                        <div class="alert-message">Failed to load pending requests</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+}
+
+
+function initializeImageZoomModal() {
+    const modal = document.getElementById('imageZoomModal');
+    const zoomedImage = document.getElementById('zoomedImagePreview');
+    const closeBtn = document.getElementById('closeImageZoomModal');
+
+    if (!modal || !zoomedImage || modal.dataset.zoomInitialized === 'true') return;
+    modal.dataset.zoomInitialized = 'true';
+
+    closeBtn?.addEventListener('click', closeImageZoomModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeImageZoomModal();
+    });
+
+    document.addEventListener('click', (e) => {
+        const trigger = e.target.closest('[data-zoom-src]');
+        if (!trigger) return;
+        const src = trigger.getAttribute('data-zoom-src');
+        if (!src) return;
+        openImageZoomModal(src);
+    });
+}
+
+function openImageZoomModal(src) {
+    const modal = document.getElementById('imageZoomModal');
+    const zoomedImage = document.getElementById('zoomedImagePreview');
+    if (!modal || !zoomedImage || !src) return;
+
+    zoomedImage.src = src;
+    modal.classList.add('active');
+}
+
+function closeImageZoomModal() {
+    const modal = document.getElementById('imageZoomModal');
+    const zoomedImage = document.getElementById('zoomedImagePreview');
+    if (modal) modal.classList.remove('active');
+    if (zoomedImage) zoomedImage.src = '';
+}
+
+function initializeStudentIdCaptureModal() {
+    const modal = document.getElementById('studentIdCaptureModal');
+    if (!modal || modal.dataset.initialized === 'true') return;
+    modal.dataset.initialized = 'true';
+
+    document.getElementById('closeStudentIdCaptureModal')?.addEventListener('click', closeStudentIdCaptureModal);
+    document.getElementById('cancelStudentIdCaptureBtn')?.addEventListener('click', closeStudentIdCaptureModal);
+    document.getElementById('openStudentIdCameraBtn')?.addEventListener('click', startStudentIdCamera);
+    document.getElementById('captureStudentIdBtn')?.addEventListener('click', captureStudentIdPhoto);
+    document.getElementById('retakeStudentIdBtn')?.addEventListener('click', retakeStudentIdPhoto);
+    document.getElementById('saveStudentIdCaptureBtn')?.addEventListener('click', saveStudentIdCapture);
+    document.getElementById('studentIdFileInput')?.addEventListener('change', handleStudentIdUpload);
+
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeStudentIdCaptureModal();
+    });
+}
+
+function initializeStaffFaceCaptureModal() {
+    const modal = document.getElementById('staffFaceCaptureModal');
+    if (!modal || modal.dataset.initialized === 'true') return;
+    modal.dataset.initialized = 'true';
+
+    document.getElementById('closeStaffFaceCaptureModal')?.addEventListener('click', cancelStaffFaceCapture);
+    document.getElementById('cancelStaffFaceCaptureBtn')?.addEventListener('click', cancelStaffFaceCapture);
+    document.getElementById('openStaffFaceCameraBtn')?.addEventListener('click', startStaffFaceCamera);
+    document.getElementById('captureStaffFaceBtn')?.addEventListener('click', captureStaffFacePhoto);
+    document.getElementById('retakeStaffFaceBtn')?.addEventListener('click', retakeStaffFacePhoto);
+    document.getElementById('useStaffFacePhotoBtn')?.addEventListener('click', useStaffFacePhoto);
+    modal.addEventListener('click', event => {
+        if (event.target === modal) cancelStaffFaceCapture();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && modal.classList.contains('active')) cancelStaffFaceCapture();
+    });
+}
+
+function initializeReturnItemPhotoModal() {
+    const modal = document.getElementById('returnItemPhotoModal');
+    if (!modal || modal.dataset.initialized === 'true') return;
+    modal.dataset.initialized = 'true';
+
+    document.getElementById('closeReturnItemPhotoModal')?.addEventListener('click', cancelReturnItemCapture);
+    document.getElementById('cancelReturnItemPhotoBtn')?.addEventListener('click', cancelReturnItemCapture);
+    document.getElementById('openReturnItemCameraBtn')?.addEventListener('click', startReturnItemCamera);
+    document.getElementById('captureReturnItemPhotoBtn')?.addEventListener('click', captureReturnItemPhoto);
+    document.getElementById('retakeReturnItemPhotoBtn')?.addEventListener('click', retakeReturnItemPhoto);
+    document.getElementById('useReturnItemPhotoBtn')?.addEventListener('click', useReturnItemPhoto);
+    modal.addEventListener('click', event => {
+        if (event.target === modal) cancelReturnItemCapture();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && modal.classList.contains('active')) cancelReturnItemCapture();
+    });
+}
+
+function setReturnItemCaptureStatus(message, type = 'info') {
+    const statusEl = document.getElementById('returnItemPhotoStatus');
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.style.color = type === 'error' ? 'var(--danger)' : type === 'success' ? 'var(--success)' : 'var(--text-secondary)';
+}
+
+async function openReturnItemPhotoCapture() {
+    const modal = document.getElementById('returnItemPhotoModal');
+    if (!modal) {
+        showToast('The return item camera dialog is missing. Reload the admin page and try again.', 'error');
+        return null;
+    }
+    initializeReturnItemPhotoModal();
+
+    if (resolveReturnItemCapture && modal.classList.contains('active')) {
+        setReturnItemCaptureStatus('Finish or cancel the item photo capture already open before confirming another return.', 'error');
+        return null;
+    }
+    if (resolveReturnItemCapture) finishReturnItemCapture(null);
+
+    returnItemCaptureImage = '';
+    const video = document.getElementById('returnItemPhotoVideo');
+    const preview = document.getElementById('returnItemPhotoPreview');
+    if (video) {
+        video.style.display = '';
+        video.srcObject = null;
+    }
+    if (preview) {
+        preview.style.display = 'none';
+        preview.removeAttribute('src');
+    }
+    document.getElementById('captureReturnItemPhotoBtn').style.display = '';
+    document.getElementById('retakeReturnItemPhotoBtn').style.display = 'none';
+    document.getElementById('useReturnItemPhotoBtn').style.display = 'none';
+    setReturnItemCaptureStatus('Take a live camera photo of the returned item.');
+    modal.classList.add('active');
+
+    return new Promise(resolve => {
+        resolveReturnItemCapture = resolve;
+        startReturnItemCamera();
+    });
+}
+
+async function startReturnItemCamera() {
+    const video = document.getElementById('returnItemPhotoVideo');
+    if (!video) return;
+    if (!window.isSecureContext) {
+        setReturnItemCaptureStatus('Camera access requires HTTPS (or localhost). Open the admin page using its secure HTTPS address.', 'error');
+        return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+        setReturnItemCaptureStatus('Camera access is unavailable in this browser. A live item photo is required to confirm the return.', 'error');
+        return;
+    }
+
+    try {
+        if (returnItemCameraStream?.getVideoTracks().some(track => track.readyState === 'live')) {
+            video.srcObject = returnItemCameraStream;
+            await video.play();
+            return;
+        }
+        returnItemCameraStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'environment' } },
+            audio: false
+        });
+        if (!resolveReturnItemCapture) {
+            stopReturnItemCamera();
+            return;
+        }
+        video.srcObject = returnItemCameraStream;
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        await video.play();
+        setReturnItemCaptureStatus('Camera is on. Position the returned item clearly and capture the photo.', 'success');
+    } catch (error) {
+        console.error('Return item camera error:', error);
+        stopReturnItemCamera();
+        const messages = {
+            NotAllowedError: 'Camera permission was denied. Allow camera access for this site, then try again.',
+            NotFoundError: 'No camera was found on this device. A live item photo is required to confirm the return.',
+            NotReadableError: 'The camera is already in use by another app. Close it and try again.',
+            SecurityError: 'Camera access is blocked by browser security. Open the admin page using HTTPS.'
+        };
+        setReturnItemCaptureStatus(messages[error.name] || `Camera could not start (${error.name || 'unknown error'}). Check camera permissions and try again.`, 'error');
+    }
+}
+
+function stopReturnItemCamera() {
+    if (returnItemCameraStream) {
+        returnItemCameraStream.getTracks().forEach(track => track.stop());
+        returnItemCameraStream = null;
+    }
+    const video = document.getElementById('returnItemPhotoVideo');
+    if (video) video.srcObject = null;
+}
+
+function captureReturnItemPhoto() {
+    const video = document.getElementById('returnItemPhotoVideo');
+    const canvas = document.getElementById('returnItemPhotoCanvas');
+    if (!video?.videoWidth || !video.videoHeight || !canvas) {
+        setReturnItemCaptureStatus('Open the camera before capturing the returned item photo.', 'error');
+        return;
+    }
+
+    const scale = Math.min(1, 1200 / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    const context = canvas.getContext('2d');
+    if (!context) {
+        setReturnItemCaptureStatus('Could not prepare the camera image. Please try again.', 'error');
+        return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    returnItemCaptureImage = canvas.toDataURL('image/jpeg', 0.78);
+    const preview = document.getElementById('returnItemPhotoPreview');
+    if (preview) {
+        preview.src = returnItemCaptureImage;
+        preview.style.display = 'block';
+    }
+    video.style.display = 'none';
+    document.getElementById('captureReturnItemPhotoBtn').style.display = 'none';
+    document.getElementById('retakeReturnItemPhotoBtn').style.display = '';
+    document.getElementById('useReturnItemPhotoBtn').style.display = '';
+    stopReturnItemCamera();
+    setReturnItemCaptureStatus('Photo captured. Review it, then use the photo to confirm the return.', 'success');
+}
+
+function retakeReturnItemPhoto() {
+    returnItemCaptureImage = '';
+    const video = document.getElementById('returnItemPhotoVideo');
+    const preview = document.getElementById('returnItemPhotoPreview');
+    if (video) video.style.display = '';
+    if (preview) {
+        preview.style.display = 'none';
+        preview.removeAttribute('src');
+    }
+    document.getElementById('captureReturnItemPhotoBtn').style.display = '';
+    document.getElementById('retakeReturnItemPhotoBtn').style.display = 'none';
+    document.getElementById('useReturnItemPhotoBtn').style.display = 'none';
+    startReturnItemCamera();
+}
+
+function useReturnItemPhoto() {
+    if (!returnItemCaptureImage) {
+        setReturnItemCaptureStatus('Capture a photo of the returned item before continuing.', 'error');
+        return;
+    }
+    finishReturnItemCapture(returnItemCaptureImage);
+}
+
+function cancelReturnItemCapture() {
+    finishReturnItemCapture(null);
+}
+
+function finishReturnItemCapture(photo) {
+    stopReturnItemCamera();
+    document.getElementById('returnItemPhotoModal')?.classList.remove('active');
+    returnItemCaptureImage = '';
+    const resolve = resolveReturnItemCapture;
+    resolveReturnItemCapture = null;
+    resolve?.(photo);
+}
+
+function setStaffFaceCaptureStatus(message, type = 'info') {
+    const statusEl = document.getElementById('staffFaceCaptureStatus');
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.style.color = type === 'error' ? 'var(--danger)' : type === 'success' ? 'var(--success)' : 'var(--text-secondary)';
+}
+
+async function openStaffFaceCapture() {
+    const modal = document.getElementById('staffFaceCaptureModal');
+    if (!modal) {
+        showToast('The staff camera dialog is missing. Reload the admin page and try again.', 'error');
+        return null;
+    }
+    initializeStaffFaceCaptureModal();
+
+    if (resolveStaffFaceCapture && modal.classList.contains('active')) {
+        setStaffFaceCaptureStatus('Finish or cancel the staff photo capture already open before starting another approval.', 'error');
+        return null;
+    }
+    if (resolveStaffFaceCapture) {
+        finishStaffFaceCapture(null);
+    }
+
+    staffFaceCaptureImage = '';
+    const video = document.getElementById('staffFaceVideo');
+    const preview = document.getElementById('staffFacePreview');
+    if (video) {
+        video.style.display = '';
+        video.srcObject = null;
+    }
+    if (preview) {
+        preview.style.display = 'none';
+        preview.removeAttribute('src');
+    }
+    document.getElementById('captureStaffFaceBtn').style.display = '';
+    document.getElementById('retakeStaffFaceBtn').style.display = 'none';
+    document.getElementById('useStaffFacePhotoBtn').style.display = 'none';
+    setStaffFaceCaptureStatus('Take a live camera photo of the staff member approving this request.');
+    modal.classList.add('active');
+
+    return new Promise(resolve => {
+        resolveStaffFaceCapture = resolve;
+        startStaffFaceCamera();
+    });
+}
+
+async function startStaffFaceCamera() {
+    const video = document.getElementById('staffFaceVideo');
+    if (!video) return;
+    if (!window.isSecureContext) {
+        setStaffFaceCaptureStatus('Camera access requires HTTPS (or localhost). Open the admin page using its secure HTTPS address.', 'error');
+        return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+        setStaffFaceCaptureStatus('Camera access is unavailable in this browser. Staff photo capture is required to approve.', 'error');
+        return;
+    }
+
+    try {
+        if (staffFaceCameraStream?.getVideoTracks().some(track => track.readyState === 'live')) {
+            video.srcObject = staffFaceCameraStream;
+            await video.play();
+            return;
+        }
+        staffFaceCameraStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: 'user' } },
+            audio: false
+        });
+        if (!resolveStaffFaceCapture) {
+            stopStaffFaceCamera();
+            return;
+        }
+        video.srcObject = staffFaceCameraStream;
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        await video.play();
+        setStaffFaceCaptureStatus("Camera is on. Center the staff member's face and capture the photo.", 'success');
+    } catch (error) {
+        console.error('Staff camera error:', error);
+        stopStaffFaceCamera();
+        const messages = {
+            NotAllowedError: 'Camera permission was denied. Allow camera access for this site, then try again.',
+            NotFoundError: 'No camera was found on this device. A live staff photo is required to approve.',
+            NotReadableError: 'The camera is already in use by another app. Close it and try again.',
+            SecurityError: 'Camera access is blocked by browser security. Open the admin page using HTTPS.'
+        };
+        setStaffFaceCaptureStatus(messages[error.name] || `Camera could not start (${error.name || 'unknown error'}). Check camera permissions and try again.`, 'error');
+    }
+}
+
+function stopStaffFaceCamera() {
+    if (staffFaceCameraStream) {
+        staffFaceCameraStream.getTracks().forEach(track => track.stop());
+        staffFaceCameraStream = null;
+    }
+    const video = document.getElementById('staffFaceVideo');
+    if (video) video.srcObject = null;
+}
+
+function captureStaffFacePhoto() {
+    const video = document.getElementById('staffFaceVideo');
+    const canvas = document.getElementById('staffFaceCanvas');
+    if (!video?.videoWidth || !video.videoHeight || !canvas) {
+        setStaffFaceCaptureStatus('Open the camera before capturing the staff photo.', 'error');
+        return;
+    }
+
+    const cropSize = Math.min(video.videoWidth, video.videoHeight);
+    canvas.width = 600;
+    canvas.height = 600;
+    const context = canvas.getContext('2d');
+    context.drawImage(
+        video,
+        (video.videoWidth - cropSize) / 2,
+        (video.videoHeight - cropSize) / 2,
+        cropSize,
+        cropSize,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+    staffFaceCaptureImage = canvas.toDataURL('image/jpeg', 0.72);
+    const preview = document.getElementById('staffFacePreview');
+    if (preview) {
+        preview.src = staffFaceCaptureImage;
+        preview.style.display = 'block';
+    }
+    video.style.display = 'none';
+    document.getElementById('captureStaffFaceBtn').style.display = 'none';
+    document.getElementById('retakeStaffFaceBtn').style.display = '';
+    document.getElementById('useStaffFacePhotoBtn').style.display = '';
+    stopStaffFaceCamera();
+    setStaffFaceCaptureStatus('Photo captured. Review it, then confirm to continue approval.', 'success');
+}
+
+function retakeStaffFacePhoto() {
+    staffFaceCaptureImage = '';
+    const video = document.getElementById('staffFaceVideo');
+    const preview = document.getElementById('staffFacePreview');
+    if (video) video.style.display = '';
+    if (preview) {
+        preview.style.display = 'none';
+        preview.removeAttribute('src');
+    }
+    document.getElementById('captureStaffFaceBtn').style.display = '';
+    document.getElementById('retakeStaffFaceBtn').style.display = 'none';
+    document.getElementById('useStaffFacePhotoBtn').style.display = 'none';
+    startStaffFaceCamera();
+}
+
+function useStaffFacePhoto() {
+    if (!staffFaceCaptureImage) {
+        setStaffFaceCaptureStatus('Capture a staff photo before continuing.', 'error');
+        return;
+    }
+    finishStaffFaceCapture(staffFaceCaptureImage);
+}
+
+function cancelStaffFaceCapture() {
+    finishStaffFaceCapture(null);
+}
+
+function finishStaffFaceCapture(photo) {
+    stopStaffFaceCamera();
+    document.getElementById('staffFaceCaptureModal')?.classList.remove('active');
+    staffFaceCaptureImage = '';
+    const resolve = resolveStaffFaceCapture;
+    resolveStaffFaceCapture = null;
+    resolve?.(photo);
+}
+
+function setStudentIdCaptureStatus(message, type = 'info') {
+    const statusEl = document.getElementById('studentIdCaptureStatus');
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.style.color = type === 'error' ? 'var(--danger)' : type === 'success' ? 'var(--success)' : 'var(--text-secondary)';
+}
+
+function resetStudentIdCaptureUI() {
+    studentIdCaptureImage = '';
+
+    const video = document.getElementById('studentIdVideo');
+    const preview = document.getElementById('studentIdPreview');
+    const fileInput = document.getElementById('studentIdFileInput');
+    const captureBtn = document.getElementById('captureStudentIdBtn');
+    const retakeBtn = document.getElementById('retakeStudentIdBtn');
+
+    if (video) {
+        video.style.display = '';
+        video.srcObject = null;
+    }
+    if (preview) {
+        preview.style.display = 'none';
+        preview.removeAttribute('src');
+    }
+    if (fileInput) fileInput.value = '';
+    if (captureBtn) captureBtn.style.display = '';
+    if (retakeBtn) retakeBtn.style.display = 'none';
+
+    setStudentIdCaptureStatus('Camera is ready. You can also upload a photo if camera access is blocked.');
+}
+
+async function startStudentIdCamera() {
+    const video = document.getElementById('studentIdVideo');
+    if (!video) return;
+
+    if (!window.isSecureContext) {
+        setStudentIdCaptureStatus('Camera access requires HTTPS (or localhost). Open the admin page using its secure HTTPS address.', 'error');
+        return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+        setStudentIdCaptureStatus('Camera access is unavailable in this browser. Please upload a student ID photo.', 'error');
+        return;
+    }
+
+    try {
+        if (studentIdCameraStream?.getVideoTracks().some(track => track.readyState === 'live')) {
+            video.srcObject = studentIdCameraStream;
+        } else {
+            stopStudentIdCamera();
+            try {
+                studentIdCameraStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: { ideal: 'environment' } },
+                    audio: false
+                });
+            } catch (error) {
+                if (!['OverconstrainedError', 'ConstraintNotSatisfiedError', 'TypeError'].includes(error.name)) {
+                    throw error;
+                }
+                studentIdCameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            }
+            video.srcObject = studentIdCameraStream;
+        }
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        await video.play();
+        setStudentIdCaptureStatus('Camera opened. Hold the ID steady, then press Capture.', 'success');
+    } catch (error) {
+        console.error('Camera error:', error);
+        const cameraConnected = Boolean(studentIdCameraStream?.getVideoTracks().some(track => track.readyState === 'live'));
+        if (!(error.name === 'NotAllowedError' && cameraConnected)) {
+            stopStudentIdCamera();
+            video.srcObject = null;
+        }
+        const messages = {
+            NotAllowedError: 'Camera permission was denied. Allow camera access for this site in your browser settings, then try again.',
+            NotFoundError: 'No camera was found on this device. You can upload a student ID photo instead.',
+            NotReadableError: 'The camera is already in use by another app. Close it and try again.',
+            SecurityError: 'Camera access is blocked by browser security. Open the admin page using HTTPS.',
+            AbortError: 'The camera could not start. Please try again or upload a student ID photo.'
+        };
+        setStudentIdCaptureStatus(error.name === 'NotAllowedError' && cameraConnected
+            ? 'Camera is connected, but the preview was blocked. Press Open Camera again or upload a student ID photo.'
+            : messages[error.name] || `Camera could not start (${error.name || 'unknown error'}). Check browser permissions or upload a student ID photo.`, 'error');
+    }
+}
+
+function stopStudentIdCamera() {
+    if (studentIdCameraStream) {
+        studentIdCameraStream.getTracks().forEach(track => track.stop());
+        studentIdCameraStream = null;
+    }
+}
+
+function compressStudentIdCanvas(canvas, maxWidth = 900, maxHeight = 600, quality = 0.72) {
+    let { width, height } = canvas;
+    let targetWidth = width;
+    let targetHeight = height;
+
+    if (width > maxWidth || height > maxHeight) {
+        const ratio = Math.min(maxWidth / width, maxHeight / height);
+        targetWidth = Math.round(width * ratio);
+        targetHeight = Math.round(height * ratio);
+    }
+
+    const output = document.createElement('canvas');
+    output.width = targetWidth;
+    output.height = targetHeight;
+    const ctx = output.getContext('2d');
+    ctx.drawImage(canvas, 0, 0, targetWidth, targetHeight);
+    return output.toDataURL('image/jpeg', quality);
+}
+
+function showStudentIdPreview(dataUrl, message = 'Student ID photo captured.') {
+    const video = document.getElementById('studentIdVideo');
+    const preview = document.getElementById('studentIdPreview');
+    const captureBtn = document.getElementById('captureStudentIdBtn');
+    const retakeBtn = document.getElementById('retakeStudentIdBtn');
+
+    studentIdCaptureImage = dataUrl;
+    if (preview) {
+        preview.src = dataUrl;
+        preview.style.display = 'block';
+    }
+    if (video) video.style.display = 'none';
+    if (captureBtn) captureBtn.style.display = 'none';
+    if (retakeBtn) retakeBtn.style.display = '';
+    setStudentIdCaptureStatus(message, 'success');
+}
+
+function captureStudentIdPhoto() {
+    const video = document.getElementById('studentIdVideo');
+    const canvas = document.getElementById('studentIdCanvas');
+
+    if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
+        setStudentIdCaptureStatus('Open the camera first or upload a photo.', 'error');
+        return;
+    }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = compressStudentIdCanvas(canvas);
+    showStudentIdPreview(dataUrl, 'Student ID photo captured from camera.');
+    stopStudentIdCamera();
+}
+
+async function handleStudentIdUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+        const dataUrl = await resizeImage(file, 900, 600);
+        showStudentIdPreview(dataUrl, 'Student ID photo uploaded successfully.');
+        stopStudentIdCamera();
+    } catch (error) {
+        console.error('Upload preview error:', error);
+        setStudentIdCaptureStatus('Failed to read the selected image.', 'error');
+    }
+}
+
+async function openStudentIdCaptureModal(items, adminName, staffPhoto) {
+    pendingBorrowApproval = items;
+    pendingBorrowApprovalName = adminName;
+    pendingBorrowStaffPhoto = staffPhoto;
+    resetStudentIdCaptureUI();
+
+    const modal = document.getElementById('studentIdCaptureModal');
+    if (modal) modal.classList.add('active');
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+        setStudentIdCaptureStatus('This browser cannot open the camera. Please upload a student ID photo.', 'error');
+        return;
+    }
+
+    await startStudentIdCamera();
+}
+
+function retakeStudentIdPhoto() {
+    resetStudentIdCaptureUI();
+    startStudentIdCamera();
+}
+
+function closeStudentIdCaptureModal() {
+    stopStudentIdCamera();
+    resetStudentIdCaptureUI();
+    pendingBorrowApproval = null;
+    pendingBorrowApprovalName = null;
+    pendingBorrowStaffPhoto = '';
+    const modal = document.getElementById('studentIdCaptureModal');
+    if (modal) modal.classList.remove('active');
+}
+
+async function saveStudentIdCapture() {
+    if (!pendingBorrowApproval || (Array.isArray(pendingBorrowApproval) && pendingBorrowApproval.length === 0)) {
+        showToast('Borrow request details are missing.', 'error');
+        return;
+    }
+
+    if (!studentIdCaptureImage) {
+        setStudentIdCaptureStatus('Please capture or upload the student ID first.', 'error');
+        return;
+    }
+
+    await approveBorrow(pendingBorrowApproval, studentIdCaptureImage, pendingBorrowApprovalName, pendingBorrowStaffPhoto);
+}
+
+async function promptAdminName(confirmOptions) {
+    let staff;
+    try {
+        const snapshot = await db.collection('admin_staff_names').orderBy('name').get();
+        staff = snapshot.docs.map(doc => ({ id: String(doc.id), name: doc.data().name }));
+    } catch (error) {
+        console.error('Unable to load manually managed staff names:', error);
+        showToast('Unable to load staff names. Check the admin staff names database migration and try again.', 'error');
+        return null;
+    }
+
+    const selectedId = await showConfirm({
+        ...confirmOptions,
+        selectLabel: 'Staff Name',
+        selectPlaceholder: 'Select staff member',
+        selectOptions: staff.map(person => ({
+            value: person.id,
+            label: person.name
+        })),
+        selectDefault: '',
+        selectHelpText: 'Manage staff names in User Management.'
+    });
+    return staff.find(person => person.id === selectedId)?.name || null;
+}
+
+async function approveBorrow(items, capturedStudentIdPhoto = null, adminName = null, staffPhotoURL = null) {
+    if (!adminName) {
+        const selectedAdminName = await promptAdminName({
+            title: 'Approve Borrow',
+            message: 'Select the staff member who is approving this request.',
+            confirmText: 'Continue',
+            type: 'success'
+        });
+        if (!selectedAdminName) return;
+        adminName = selectedAdminName;
+    }
+
+    if (!staffPhotoURL) {
+        staffPhotoURL = await openStaffFaceCapture();
+        if (!staffPhotoURL) return;
+    }
+
+    if (!capturedStudentIdPhoto) {
+        await openStudentIdCaptureModal(items, adminName, staffPhotoURL);
+        return;
+    }
+
+    try {
+        const batch = db.batch();
+        const itemsArray = Array.isArray(items) ? items : [items];
+        const confirmedByName = adminName;
+        
+        for (const item of itemsArray) {
+            const borrowDoc = await db.collection('borrowings').doc(item.borrowingId).get();
+            if (!borrowDoc.exists) {
+                throw new Error('This borrow request could not be found. Refresh Pending Approvals and try again.');
+            }
+            const borrowData = borrowDoc ? borrowDoc.data() : {};
+
+            batch.update(db.collection('borrowings').doc(item.borrowingId), {
+                status: 'borrowed',
+                studentIdPhoto: capturedStudentIdPhoto,
+                studentIdPhotoCapturedAt: db.FieldValue.serverTimestamp(),
+                studentIdPhotoCapturedBy: currentAdmin?.uid || null,
+                studentIdPhotoCapturedByName: currentAdminData?.name || currentAdmin?.email || 'Administrator',
+                approvedBy: confirmedByName,
+                approvedByName: confirmedByName,
+                approvedAt: db.FieldValue.serverTimestamp(),
+                activityHistory: [
+                    ...(Array.isArray(borrowData.activityHistory) ? borrowData.activityHistory : []),
+                    {
+                        type: 'borrowed',
+                        at: new Date().toISOString(),
+                        staffName: confirmedByName,
+                        staffPhotoURL,
+                        expectedReturnTime: borrowData.expectedReturnTime || ''
+                    }
+                ]
+            });
+
+            batch.update(db.collection('equipment').doc(item.equipmentId), {
+                status: 'borrowed',
+                borrowedBy: (borrowData && borrowData.userId) || null,
+                borrowedAt: (borrowData && borrowData.borrowedAt) || db.FieldValue.serverTimestamp()
+            });
+        }
+
+        await batch.commit();
+        closeStudentIdCaptureModal();
+        showToast(itemsArray.length > 1 ? `Approved ${itemsArray.length} items` : 'Borrow request approved', 'success');
+        loadPendingRequests();
+        loadCurrentlyBorrowed();
+        loadDashboardData();
+    } catch (err) {
+        console.error(err);
+        showToast(`Error approving request: ${err.message || 'Please try again.'}`, 'error');
+    }
+}
+
+async function rejectBorrow(items) {
+    const itemsArray = Array.isArray(items) ? items : [items];
+    const message = itemsArray.length > 1 
+        ? `Reject these ${itemsArray.length} borrow requests?` 
+        : 'Reject this borrow request?';
+
+    const adminName = await promptAdminName({
+        title: 'Reject Borrow',
+        message: message,
+        confirmText: 'Reject',
+        type: 'danger'
+    });
+    if (!adminName) return;
+    const staffPhotoURL = await openStaffFaceCapture();
+    if (!staffPhotoURL) return;
+
+    try {
+        const batch = db.batch();
+        for (const item of itemsArray) {
+            const borrowingRef = db.collection('borrowings').doc(item.borrowingId);
+            const borrowingDoc = await borrowingRef.get();
+            if (!borrowingDoc.exists) {
+                throw new Error('A borrow request could not be found. Refresh Pending Approvals and try again.');
+            }
+            const borrowingData = borrowingDoc.data();
+            batch.update(db.collection('borrowings').doc(item.borrowingId), {
+                status: 'rejected',
+                rejectedByName: adminName,
+                rejectedAt: db.FieldValue.serverTimestamp(),
+                activityHistory: [
+                    ...(Array.isArray(borrowingData.activityHistory) ? borrowingData.activityHistory : []),
+                    {
+                        type: 'rejected',
+                        at: new Date().toISOString(),
+                        staffName: adminName,
+                        staffPhotoURL
+                    }
+                ]
+            });
+            batch.update(db.collection('equipment').doc(item.equipmentId), {
+                status: 'available',
+                borrowedBy: null,
+                borrowedAt: null
+            });
+        }
+        await batch.commit();
+        showToast(itemsArray.length > 1 ? `Rejected ${itemsArray.length} items` : 'Borrow request rejected', 'success');
+        loadPendingRequests();
+        loadDashboardData();
+    } catch (err) {
+        console.error(err);
+        showToast('Error rejecting request', 'error');
+    }
+}
+
+// Global exposure for bulk actions
+window.approveBorrowBulk = (storageId) => {
+    const items = window.__pendingBulkStorage?.[storageId];
+    if (items) approveBorrow(items);
+    else showToast('Could not find request data', 'error');
+};
+window.rejectBorrowBulk = (storageId) => {
+    const items = window.__pendingBulkStorage?.[storageId];
+    if (items) rejectBorrow(items);
+    else showToast('Could not find request data', 'error');
+};
+
+async function approveReturn(borrowingId, equipmentId, condition) {
+    const adminName = await promptAdminName({
+        title: 'Approve Return',
+        message: 'Approve this return request?',
+        confirmText: 'Approve',
+        type: 'success'
+    });
+    if (!adminName) return;
+    const staffPhotoURL = await openStaffFaceCapture();
+    if (!staffPhotoURL) return;
+    try {
+
+        const doc = await db.collection('borrowings').doc(borrowingId).get();
+        const data = doc.data();
+        const returnCondition = String(data.pendingReturnCondition || condition || 'good').trim().toLowerCase();
+        const due = window.getBorrowingDueAt(data.borrowedAt, data.expectedReturnTime);
+        const wasOverdue = due ? new Date() > due : false;
+
+        await db.collection('borrowings').doc(borrowingId).update({
+            status: 'returned',
+            returnedAt: db.FieldValue.serverTimestamp(),
+            wasOverdue,
+            returnCondition,
+            returnNotes: data.pendingReturnNotes || '',
+            returnApprovedByName: adminName,
+            returnApprovedAt: db.FieldValue.serverTimestamp(),
+            activityHistory: [
+                ...(Array.isArray(data.activityHistory) ? data.activityHistory : []),
+                {
+                    type: 'returned',
+                    at: new Date().toISOString(),
+                    staffName: adminName,
+                    staffPhotoURL,
+                    condition: returnCondition,
+                    notes: data.pendingReturnNotes || ''
+                }
+            ],
+            pendingReturnCondition: db.FieldValue.delete(),
+            pendingReturnNotes: db.FieldValue.delete()
+        });
+
+        await db.collection('equipment').doc(equipmentId).update({
+            status: returnCondition === 'damaged' ? 'maintenance' : 'available',
+            borrowedBy: null,
+            borrowedAt: null
+        });
+        showToast('Return request approved', 'success');
+        loadPendingRequests();
+        loadDashboardData();
+    } catch (err) {
+        console.error(err);
+        showToast('Error approving return', 'error');
+    }
+}
+
+async function rejectReturn(borrowingId, equipmentId) {
+    const adminName = await promptAdminName({
+        title: 'Reject Return',
+        message: 'Reject this return request? The item will remain marked as Borrowed.',
+        confirmText: 'Reject',
+        type: 'danger'
+    });
+    if (!adminName) return;
+    try {
+        await db.collection('borrowings').doc(borrowingId).update({
+            status: 'borrowed',
+            returnRejectedByName: adminName,
+            returnRejectedAt: db.FieldValue.serverTimestamp(),
+            pendingReturnCondition: db.FieldValue.delete(),
+            pendingReturnNotes: db.FieldValue.delete()
+        });
+        await db.collection('equipment').doc(equipmentId).update({ status: 'borrowed' });
+        showToast('Return request rejected', 'success');
+        loadPendingRequests();
+        loadDashboardData();
+    } catch (err) {
+        console.error(err);
+        showToast('Error rejecting return', 'error');
+    }
+}
+
+async function approveExtension(borrowingId) {
+    const adminName = await promptAdminName({
+        title: 'Approve Extension',
+        message: 'Approve this time extension request?',
+        confirmText: 'Approve',
+        type: 'success'
+    });
+    if (!adminName) return;
+    const staffPhotoURL = await openStaffFaceCapture();
+    if (!staffPhotoURL) return;
+    try {
+        const doc = await db.collection('borrowings').doc(borrowingId).get();
+        const data = doc.data();
+
+        const updateData = {
+            status: 'borrowed',
+            expectedReturnTime: data.requestedReturnTime,
+            requestedReturnTime: db.FieldValue.delete(),
+            extensionReason: db.FieldValue.delete(),
+            hasExtension: true,
+            extensionApprovedByName: adminName,
+            extensionApprovedAt: db.FieldValue.serverTimestamp(),
+            activityHistory: [
+                ...(Array.isArray(data.activityHistory) ? data.activityHistory : []),
+                {
+                    type: 'extended',
+                    at: new Date().toISOString(),
+                    staffName: adminName,
+                    staffPhotoURL,
+                    previousReturnTime: data.expectedReturnTime || '',
+                    expectedReturnTime: data.requestedReturnTime || '',
+                    reason: data.extensionReason || ''
+                }
+            ]
+        };
+
+        if (!data.originalExpectedReturnTime) {
+            updateData.originalExpectedReturnTime = data.expectedReturnTime;
+        }
+
+        await db.collection('borrowings').doc(borrowingId).update(updateData);
+
+        showToast('Extension request approved', 'success');
+        loadPendingRequests();
+        loadCurrentlyBorrowed();
+        loadDashboardData();
+    } catch (err) {
+        console.error(err);
+        showToast('Error approving extension', 'error');
+    }
+}
+
+async function rejectExtension(borrowingId) {
+    const adminName = await promptAdminName({
+        title: 'Reject Extension',
+        message: 'Reject this time extension request?',
+        confirmText: 'Reject',
+        type: 'danger'
+    });
+    if (!adminName) return;
+    try {
+        await db.collection('borrowings').doc(borrowingId).update({
+            status: 'borrowed',
+            extensionRejectedByName: adminName,
+            extensionRejectedAt: db.FieldValue.serverTimestamp(),
+            requestedReturnTime: db.FieldValue.delete(),
+            extensionReason: db.FieldValue.delete()
+        });
+
+        showToast('Extension request rejected', 'success');
+        loadPendingRequests();
+        loadCurrentlyBorrowed();
+        loadDashboardData();
+    } catch (err) {
+        console.error(err);
+        showToast('Error rejecting extension', 'error');
+    }
+}
+
+async function adminConfirmReturn(borrowingId, equipmentId) {
+    const conditionSelect = document.getElementById(`returnCondition_${borrowingId}`);
+    const condition = String(conditionSelect?.value || selectedReturnConditions.get(borrowingId) || 'good').trim().toLowerCase();
+
+    const adminName = await promptAdminName({
+        title: 'Confirm Return',
+        message: `Confirm return of this item? Condition: ${condition}`,
+        confirmText: 'Confirm',
+        type: 'primary'
+    });
+    if (!adminName) return;
+    const returnPhoto = await openReturnItemPhotoCapture();
+    if (!returnPhoto) return;
+    const staffPhotoURL = await openStaffFaceCapture();
+    if (!staffPhotoURL) return;
+
+    try {
+        const doc = await db.collection('borrowings').doc(borrowingId).get();
+        const data = doc.data();
+
+        const due = window.getBorrowingDueAt(data.borrowedAt, data.expectedReturnTime);
+        const wasOverdue = due ? new Date() > due : false;
+
+        await db.collection('borrowings').doc(borrowingId).update({
+            status: 'returned',
+            returnedAt: db.FieldValue.serverTimestamp(),
+            returnCondition: condition,
+            returnNotes: data.pendingReturnNotes || '',
+            returnPhoto,
+            wasOverdue: wasOverdue,
+            returnConfirmedByName: adminName,
+            returnConfirmedAt: db.FieldValue.serverTimestamp(),
+            activityHistory: [
+                ...(Array.isArray(data.activityHistory) ? data.activityHistory : []),
+                {
+                    type: 'returned',
+                    at: new Date().toISOString(),
+                    staffName: adminName,
+                    staffPhotoURL,
+                    condition,
+                    notes: data.pendingReturnNotes || ''
+                }
+            ],
+            pendingReturnCondition: db.FieldValue.delete(),
+            pendingReturnNotes: db.FieldValue.delete()
+        });
+
+        await db.collection('equipment').doc(equipmentId).update({
+            status: condition === 'damaged' ? 'maintenance' : 'available',
+            borrowedBy: null,
+            borrowedAt: null
+        });
+
+        selectedReturnConditions.delete(String(borrowingId));
+        showToast('Return confirmed successfully', 'success');
+        loadCurrentlyBorrowed();
+        loadDashboardData();
+        checkAllUsersForAutoSuspend();
+    } catch (err) {
+        console.error(err);
+        showToast('Error confirming return', 'error');
+    }
+}
+
+function previewEquipmentPhoto(input) {
+    if (input.files && input.files[0]) {
+        const file = input.files[0];
+        if (file.size > 5 * 1024 * 1024) {
+            showToast("Photo is too large (max 5MB)", "error");
+            input.value = "";
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = document.getElementById("addEquipmentPhotoImg");
+            const placeholder = document.getElementById("addEquipmentPhotoPlaceholder");
+            const removeBtn = document.getElementById("removeAddEquipmentPhotoBtn");
+            if (img) {
+                img.src = e.target.result;
+                img.style.display = 'block';
+            }
+            if (placeholder) placeholder.style.display = 'none';
+            if (removeBtn) removeBtn.style.display = 'inline-flex';
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+function clearAddEquipmentPhoto() {
+    const input = document.getElementById("equipmentPhotoInput");
+    if (input) input.value = "";
+    const img = document.getElementById("addEquipmentPhotoImg");
+    const placeholder = document.getElementById("addEquipmentPhotoPlaceholder");
+    const removeBtn = document.getElementById("removeAddEquipmentPhotoBtn");
+    if (img) {
+        img.src = '';
+        img.style.display = 'none';
+    }
+    if (placeholder) placeholder.style.display = 'block';
+    if (removeBtn) removeBtn.style.display = 'none';
+}
+
+function initializeEquipmentManagement() {
+    const addEquipmentBtn = document.getElementById('addEquipmentBtn');
+    const addEquipmentModal = document.getElementById('addEquipmentModal');
+    const closeEquipmentModal = document.getElementById('closeEquipmentModal');
+    const cancelEquipment = document.getElementById('cancelEquipment');
+    const addEquipmentForm = document.getElementById('addEquipmentForm');
+
+    if (addEquipmentBtn) {
+        addEquipmentBtn.addEventListener('click', () => {
+            addEquipmentModal.classList.add('active');
+        });
+    }
+
+    if (closeEquipmentModal) {
+        closeEquipmentModal.addEventListener('click', () => {
+            addEquipmentModal.classList.remove('active');
+            addEquipmentForm.reset();
+            clearAddEquipmentPhoto();
+        });
+    }
+
+    if (cancelEquipment) {
+        cancelEquipment.addEventListener('click', () => {
+            addEquipmentModal.classList.remove('active');
+            addEquipmentForm.reset();
+            clearAddEquipmentPhoto();
+        });
+    }
+
+    if (addEquipmentModal) {
+        addEquipmentModal.addEventListener('click', (e) => {
+            if (e.target === addEquipmentModal) {
+                addEquipmentModal.classList.remove('active');
+                addEquipmentForm.reset();
+                clearAddEquipmentPhoto();
+            }
+        });
+    }
+
+    if (addEquipmentForm) {
+        addEquipmentForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await addEquipment();
+        });
+    }
+}
+
+async function addEquipment() {
+    const equipmentId = document.getElementById('equipmentId').value.trim();
+    const name = document.getElementById('equipmentName').value.trim();
+    const category = document.getElementById('equipmentCategory').value;
+    const description = document.getElementById('equipmentDescription').value;
+
+    const submitBtn = document.querySelector('#addEquipmentForm button[type="submit"]');
+    const originalContent = submitBtn.innerHTML;
+
+    try {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span>Adding...</span>';
+
+        const existingSnapshot = await db.collection('equipment')
+            .where('equipmentId', '==', equipmentId)
+            .get();
+
+        if (!existingSnapshot.empty) {
+            showToast('Equipment ID already exists', 'error');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalContent;
+            return;
+        }
+
+        const photoInput = document.getElementById('equipmentPhotoInput');
+        let photoURL = null;
+        if (photoInput && photoInput.files && photoInput.files[0]) {
+            try {
+                photoURL = await readFileAsBase64(photoInput.files[0]);
+            } catch (photoErr) {
+                console.warn('Error reading equipment photo:', photoErr);
+            }
+        }
+
+        const newEquipData = {
+            equipmentId: equipmentId,
+            name: name,
+            category: category,
+            description: description || '',
+            status: 'available',
+            createdAt: db.FieldValue.serverTimestamp()
+        };
+        if (photoURL) {
+            newEquipData.photoURL = photoURL;
+        }
+
+        await db.collection('equipment').add(newEquipData);
+
+        showToast('Equipment added successfully!', 'success');
+        document.getElementById('addEquipmentModal').classList.remove('active');
+        document.getElementById('addEquipmentForm').reset();
+        clearAddEquipmentPhoto();
+
+        loadAllEquipment();
+        loadDashboardData();
+
+    } catch (error) {
+        console.error('Error adding equipment:', error);
+        showToast(`Failed to add equipment: ${error.message}`, 'error');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalContent;
+    }
+}
+
+function getEquipmentImage(category) {
+    const images = {
+        'projector': 'assets/images/projector.png',
+        'cable': 'assets/images/hdmi.png',
+        'remote': 'assets/images/remote.png',
+        'display': 'assets/images/display.png',
+        'extension': 'assets/images/ext-cord.png',
+        'laptop': 'assets/images/laptop.png',
+        'network': 'assets/images/network-kit.png',
+        'speaker': 'assets/images/speaker.svg',
+        'other': 'assets/images/other-kit.png'
+    };
+    return images[category] || 'assets/images/other-kit.png';
+}
+
+async function loadAllEquipment() {
+    const equipmentList = document.getElementById('equipmentList');
+    if (!equipmentList) return;
+
+    try {
+        const snapshot = await db.collection('equipment')
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        let equipment = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        currentEquipmentList = equipment;
+
+        const searchInput = document.getElementById('equipmentSearchInput')?.value.trim();
+        if (searchInput) {
+            const searchLower = searchInput.toLowerCase();
+            equipment = equipment.filter(item => {
+                const match = String(item.equipmentId).match(/\d+/);
+                const idNum = match ? match[0] : '';
+                return idNum.includes(searchInput) ||
+                    String(item.equipmentId).toLowerCase().includes(searchLower) ||
+                    String(item.name || '').toLowerCase().includes(searchLower) ||
+                    String(item.category || '').toLowerCase().includes(searchLower) ||
+                    String(item.description || '').toLowerCase().includes(searchLower);
+            });
+        }
+
+        const sortSelect = document.getElementById('equipmentSortSelect')?.value;
+        if (sortSelect === 'id_asc' || sortSelect === 'id_desc') {
+            equipment.sort((a, b) => {
+                const matchA = String(a.equipmentId).match(/\d+/);
+                const matchB = String(b.equipmentId).match(/\d+/);
+                const numA = matchA ? parseInt(matchA[0], 10) : 0;
+                const numB = matchB ? parseInt(matchB[0], 10) : 0;
+                if (sortSelect === 'id_asc') {
+                    return numA - numB;
+                } else {
+                    return numB - numA;
+                }
+            });
+        }
+
+        if (equipment.length === 0) {
+            equipmentList.innerHTML = `
+                <div class="empty-state">
+                    <h3>No equipment found</h3>
+                    <p>Start by adding new equipment</p>
+                </div>
+            `;
+        } else {
+            equipmentList.innerHTML = equipment.map(item => {
+                const imgPath = item.photoURL || getEquipmentImage(item.category);
+                return `
+                <div class="equipment-list-item">
+                    <div style="width: 60px; height: 60px; background: rgba(11, 31, 58, 0.03); border: 1px solid var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 15px; flex-shrink: 0; cursor: zoom-in;" onclick="openImageZoomModal('${imgPath}')" title="Click to zoom">
+                        <img src="${imgPath}" alt="${item.name}" style="max-width: 45px; max-height: 45px; object-fit: contain;">
+                    </div>
+                    <div class="equipment-list-info" style="flex:1;">
+                        <div class="equipment-list-name">${item.name}</div>
+                        <div class="equipment-list-meta">
+                            <span class="badge badge-category">${item.equipmentId}</span>
+                            <span class="badge badge-type">${capitalize(item.category)}</span>
+                            <span class="badge badge-status ${item.status}">${capitalize(item.status)}</span>
+                        </div>
+                    </div>
+                    <div class="equipment-list-actions">
+                    <button class="btn btn-warning" onclick="openEditEquipment('${item.id}')" title="Edit">
+                    Edit
+                    </button>
+                        <button class="btn btn-secondary btn-sm" onclick="generateQRCode('${item.id}', '${item.equipmentId}', '${item.name}')">
+                            QR Code
+                        </button>
+                        <button class="btn btn-danger" onclick="deleteEquipment('${item.id}', '${item.name}')" title="Delete">
+                        Delete
+                        </button>
+                    </div>
+                </div>
+            `}).join('');
+        }
+    } catch (error) {
+        console.error('Error loading equipment:', error);
+        equipmentList.innerHTML = `
+            <div class="empty-state">
+                <h3>Error loading equipment</h3>
+                <p>Please try again later</p>
+            </div>
+        `;
+    }
+}
+
+async function deleteEquipment(equipmentId, equipmentName) {
+    if (!await showConfirm({
+        title: 'Delete Equipment',
+        message: `Are you sure you want to delete "${equipmentName}"?\n\nThis action cannot be undone.`,
+        confirmText: 'Delete',
+        type: 'danger'
+    })) {
+        return;
+    }
+
+    try {
+        const borrowingSnapshot = await db.collection('borrowings')
+            .where('equipmentId', '==', equipmentId)
+            .where('status', '==', 'borrowed')
+            .get();
+
+        if (!borrowingSnapshot.empty) {
+            showToast('Cannot delete equipment that is currently borrowed', 'error');
+            return;
+        }
+
+        await db.collection('equipment').doc(equipmentId).delete();
+        showToast('Equipment deleted successfully', 'success');
+
+        loadAllEquipment();
+        loadDashboardData();
+    } catch (error) {
+        console.error('Error deleting equipment:', error);
+        showToast('Failed to delete equipment', 'error');
+    }
+}
+
+function generateQRCode(equipmentDocId, equipmentId, equipmentName) {
+    const qrContainer = document.getElementById('qrCodeContainer');
+    qrContainer.innerHTML = '';
+
+    const baseUrl = window.location.origin;
+    const deepLink = `${baseUrl}/student.html?borrow=${encodeURIComponent(equipmentId)}`;
+
+    new QRCode(qrContainer, {
+        text: deepLink,
+        width: 256,
+        height: 256,
+        colorDark: "#000000",
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.H
+    });
+
+    document.getElementById('qrEquipmentId').textContent = equipmentId;
+    document.getElementById('qrEquipmentName').textContent = equipmentName;
+
+    document.getElementById('qrCodeModal').classList.add('active');
+
+    setupQRActions(equipmentId);
+}
+
+
+function setupQRActions(equipmentId) {
+    const downloadBtn = document.getElementById('downloadQrBtn');
+    const printBtn = document.getElementById('printQrBtn');
+    const closeQrModal = document.getElementById('closeQrModal');
+    const qrModal = document.getElementById('qrCodeModal');
+
+    downloadBtn.onclick = () => {
+        const canvas = document.querySelector('#qrCodeContainer canvas');
+        if (canvas) {
+            const link = document.createElement('a');
+            link.download = `QR-${equipmentId}.png`;
+            link.href = canvas.toDataURL();
+            link.click();
+            showToast('QR Code downloaded', 'success');
+        }
+    };
+
+    printBtn.onclick = () => {
+        const canvas = document.querySelector('#qrCodeContainer canvas');
+        if (canvas) {
+            const printWindow = window.open('', '', 'width=600,height=600');
+            printWindow.document.write(`
+                <html>
+                <head>
+                    <title>QR Code - ${equipmentId}</title>
+                    <style>
+                        body { text-align: center; font-family: Arial, sans-serif; padding: 20px; }
+                        img { max-width: 400px; margin: 20px 0; }
+                        h2 { margin: 10px 0; }
+                    </style>
+                </head>
+                <body>
+                    <h2>Equipment QR Code</h2>
+                    <p><strong>ID:</strong> ${equipmentId}</p>
+                    <img src="${canvas.toDataURL()}" />
+                    <p><em>Scan this code to borrow or return equipment</em></p>
+                </body>
+                </html>
+            `);
+            printWindow.document.close();
+            printWindow.focus();
+            setTimeout(() => {
+                printWindow.print();
+                printWindow.close();
+            }, 250);
+        }
+    };
+
+    closeQrModal.onclick = () => {
+        qrModal.classList.remove('active');
+    };
+
+    qrModal.onclick = (e) => {
+        if (e.target === qrModal) {
+            qrModal.classList.remove('active');
+        }
+    };
+}
+
+async function loadCurrentlyBorrowed() {
+    const borrowedList = document.getElementById('borrowedList');
+    if (!borrowedList) return;
+
+    if (borrowedList.dataset.returnConditionListenerAttached !== 'true') {
+        const saveReturnCondition = (event) => {
+            const target = event.target;
+            if (target instanceof HTMLSelectElement && target.id.startsWith('returnCondition_')) {
+                const borrowingId = target.id.slice('returnCondition_'.length);
+                selectedReturnConditions.set(borrowingId, target.value);
+            }
+        };
+        borrowedList.addEventListener('input', saveReturnCondition);
+        borrowedList.addEventListener('change', saveReturnCondition);
+        borrowedList.dataset.returnConditionListenerAttached = 'true';
+    }
+
+    try {
+        const now = new Date();
+        let snapshot;
+        try {
+            snapshot = await db.collection('borrowings')
+                .where('status', 'in', ['borrowed', 'pending_return'])
+                .get();
+        } catch (qErr) {
+            console.warn("Status 'in' query failed, trying individual queries:", qErr);
+            const [bSnap, retSnap] = await Promise.all([
+                db.collection('borrowings').where('status', '==', 'borrowed').get(),
+                db.collection('borrowings').where('status', '==', 'pending_return').get()
+            ]);
+            snapshot = { docs: [...bSnap.docs, ...retSnap.docs] };
+        }
+
+        let borrowed = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        // Deduplicate in case individual queries had overlap
+        const seenIds = new Set();
+        borrowed = borrowed.filter(item => {
+            if (seenIds.has(item.id)) return false;
+            seenIds.add(item.id);
+            return true;
+        });
+
+        // Safely fetch user data for extra fields without crashing if query fails
+        const userIds = [...new Set(borrowed.map(b => b.userId).filter(id => id))];
+        const usersMap = {};
+        if (userIds.length > 0) {
+            try {
+                const chunks = [];
+                for (let i = 0; i < userIds.length; i += 10) chunks.push(userIds.slice(i, i + 10));
+                for (const chunk of chunks) {
+                    try {
+                        const uSnap = await db.collection("users").where(db.FieldPath.documentId(), "in", chunk).get();
+                        uSnap.docs.forEach(d => { usersMap[d.id] = d.data(); });
+                    } catch (_) {
+                        await Promise.all(chunk.map(async (uid) => {
+                            try {
+                                const doc = await db.collection("users").doc(uid).get();
+                                if (doc.exists) usersMap[uid] = doc.data();
+                            } catch (__) {}
+                        }));
+                    }
+                }
+            } catch (uErr) {
+                console.warn("Could not fetch user details for borrowed list:", uErr);
+            }
+        }
+
+        const sortVal = document.getElementById('borrowedSort')?.value || 'borrowedAt_desc';
+        const [field, direction] = sortVal.split('_');
+
+        borrowed.sort((a, b) => {
+            let valA, valB;
+            if (field === 'userName') {
+                valA = ((usersMap[a.userId]?.firstName && usersMap[a.userId]?.lastName) ? `${usersMap[a.userId].firstName} ${usersMap[a.userId].lastName}` : a.userName || a.userEmail || '').toLowerCase();
+                valB = ((usersMap[b.userId]?.firstName && usersMap[b.userId]?.lastName) ? `${usersMap[b.userId].firstName} ${usersMap[b.userId].lastName}` : b.userName || b.userEmail || '').toLowerCase();
+            } else {
+                valA = a[field];
+                valB = b[field];
+
+                if (valA?.toDate) valA = valA.toDate();
+                if (valB?.toDate) valB = valB.toDate();
+
+                if (valA == null) return 1;
+                if (valB == null) return -1;
+
+                if (typeof valA === 'string') {
+                    valA = valA.toLowerCase();
+                    valB = valB.toLowerCase();
+                }
+            }
+
+            if (direction === 'asc') {
+                return valA > valB ? 1 : -1;
+            } else {
+                return valA < valB ? 1 : -1;
+            }
+        });
+
+        if (borrowed.length === 0) {
+            borrowedList.innerHTML = `
+                <div class="empty-state">
+                    <h3>No borrowed equipment</h3>
+                    <p>All equipment is currently available</p>
+                </div>
+            `;
+        } else {
+            borrowedList.querySelectorAll('select[id^="returnCondition_"]').forEach(select => {
+                const borrowingId = select.id.slice('returnCondition_'.length);
+                selectedReturnConditions.set(borrowingId, select.value);
+            });
+
+            if (borrowedList.contains(document.activeElement) &&
+                document.activeElement instanceof HTMLSelectElement &&
+                document.activeElement.id.startsWith('returnCondition_')) {
+                return;
+            }
+
+            borrowedList.innerHTML = borrowed.map(item => {
+                const isPendingReturn = item.status === 'pending_return';
+                const returnCondition = selectedReturnConditions.get(String(item.id)) || item.pendingReturnCondition || 'good';
+                const due = window.getBorrowingDueAt(item.borrowedAt, item.expectedReturnTime);
+                const isOverdue = due ? now > due : false;
+
+                const userDoc = usersMap[item.userId] || {};
+                const middleInitialValue = String(userDoc.middleInitial || '').replace(/\.+$/, '');
+                const middleInitial = middleInitialValue ? ` ${middleInitialValue}.` : '';
+                const displayName = (userDoc.firstName && userDoc.lastName)
+                    ? `${userDoc.firstName}${middleInitial} ${userDoc.lastName}`
+                    : (item.userName || item.userEmail || 'Unknown Borrower');
+                const courseInfo = userDoc.course ? userDoc.course : (item.course || 'N/A');
+                const yearSecInfo = userDoc.yearSection ? userDoc.yearSection : ((userDoc.yearLevel && userDoc.section) ? `${userDoc.yearLevel}-${userDoc.section}` : (item.yearSection || 'N/A'));
+                const studentIdInfo = item.studentId || item.facultyId || userDoc.studentId || userDoc.facultyId || 'N/A';
+                const userEmailInfo = item.userEmail || userDoc.email || 'N/A';
+
+                return `
+                    <div class="borrowed-list-item" ${isPendingReturn ? 'style="border-left: 4px solid #d97706; background: rgba(217, 119, 6, 0.02);"' : ''}>
+                        <div class="borrowed-list-header">
+                            <div>
+                                <div class="borrowed-student">${displayName}</div>
+                                <div class="borrowed-list-details">
+                                    ${userEmailInfo} • ID: ${studentIdInfo} <br>
+                                    ${userDoc.role === 'professor' ? (userDoc.department || 'N/A') : `${courseInfo} • ${yearSecInfo}`}
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                                ${isPendingReturn
+                        ? '<span class="badge badge-status" style="background: rgba(245, 158, 11, 0.1); color: #b45309; font-weight: 600;">RETURN REQUESTED</span>'
+                        : ''}
+                                ${isOverdue
+                        ? '<span class="badge badge-status" style="background: rgba(239, 68, 68, 0.1); color: var(--danger); font-weight: 600;">OVERDUE</span>'
+                        : ''}
+                            </div>
+                        </div>
+
+                        <div class="borrowed-list-details" style="margin-top: 1rem;">
+                            <strong>Equipment:</strong> ${item.equipmentName || 'Equipment'}<br>
+                            <strong>Borrowed:</strong> ${formatDate(item.borrowedAt)}<br>
+                            <strong>Current Due:</strong> ${item.expectedReturnTime || 'N/A'}<br>
+                            ${item.studentIdPhoto ? `
+                                <div style="margin-top: 0.9rem; padding: 0.85rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: rgba(11, 31, 58, 0.02); display: flex; gap: 0.9rem; align-items: center; flex-wrap: wrap;">
+                                    <img src="${item.studentIdPhoto}" alt="Student ID" class="zoomable-id-photo" data-zoom-src="${item.studentIdPhoto}" title="Click to zoom" style="width: 120px; max-width: 100%; aspect-ratio: 16 / 10; object-fit: cover; border-radius: 0.75rem; border: 1px solid var(--border); background: #fff; cursor: zoom-in; transition: transform 0.2s ease, box-shadow 0.2s ease;">
+                                    <div style="flex: 1; min-width: 180px;">
+                                        <strong style="display:block; margin-bottom: 0.2rem;">Stored ID Photo</strong>
+                                        <div style="color: var(--text-secondary); font-size: 0.85rem;">Click the photo to zoom. This captured ID will be removed automatically after the item is returned.</div>
+                                        ${item.studentIdPhotoCapturedAt ? `<div style="margin-top: 0.35rem; font-size: 0.8rem; color: var(--text-secondary);">Captured: ${formatDate(item.studentIdPhotoCapturedAt)}</div>` : ''}
+                                    </div>
+                                </div>
+                            ` : `
+                                <div style="margin-top: 0.9rem; padding: 0.75rem 0.9rem; border-radius: var(--radius-md); background: rgba(245, 158, 11, 0.08); color: #9a6700; font-size: 0.85rem;">No student ID photo stored for this borrowing yet.</div>
+                            `}
+                            <strong>Room:</strong> ${item.room || 'N/A'}<br>
+                            <strong>Purpose:</strong> ${item.purpose || 'N/A'}
+                        </div>
+
+                        <div style="margin-top: 1rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+                                ${item.userId ? `
+                                    <button class="btn btn-blue btn-sm" onclick="sendSMSOverdue('${item.userId}', '${item.equipmentName || 'Equipment'}', '${item.id}')" title="Send SMS Reminder">
+                                        SMS
+                                    </button>
+                                ` : ''}
+                                <select id="returnCondition_${item.id}" style="flex: 1; min-width: 160px; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-secondary); color: var(--text-primary); font-family: var(--font-body); font-size: 0.875rem;">
+                                    <option value="good" ${returnCondition === 'good' ? 'selected' : ''}>Good – No issues</option>
+                                    <option value="damaged" ${returnCondition === 'damaged' ? 'selected' : ''}>Damaged – Needs repair</option>
+                                </select>
+                                <button class="btn btn-primary btn-sm" onclick="adminConfirmReturn('${item.id}', '${item.equipmentId}')">
+                                    ${isPendingReturn ? 'Approve & Confirm Return' : 'Confirm Return'}
+                                </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+    } catch (error) {
+        console.error('Error loading borrowed items:', error);
+        borrowedList.innerHTML = `
+            <div class="empty-state">
+                <h3>Error loading borrowed items</h3>
+                <p>Please try again later</p>
+            </div>
+        `;
+    }
+}
+
+async function loadBorrowingLogs() {
+    const logsList = document.getElementById('logsList');
+    if (!logsList) return;
+
+    try {
+        const startDate = document.getElementById('startDate')?.value;
+        const endDate = document.getElementById('endDate')?.value;
+        const studentFilter = document.getElementById('studentFilter')?.value.toLowerCase() || '';
+        const equipmentFilter = document.getElementById('equipmentFilter')?.value.toLowerCase() || '';
+
+        const snapshot = await db.collection('borrowings')
+            .orderBy('borrowedAt', 'desc')
+            .limit(100)
+            .get();
+
+        let logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        const userIds = [...new Set(logs.map(l => l.userId).filter(id => id))];
+        const usersMap = {};
+        if (userIds.length > 0) {
+            const chunks = [];
+            for (let i = 0; i < userIds.length; i += 10) chunks.push(userIds.slice(i, i + 10));
+            for (const chunk of chunks) {
+                const uSnap = await db.collection("users").where('users_id', 'in', chunk).get();
+                uSnap.docs.forEach(d => {
+                    const user = d.data();
+                    usersMap[String(user.users_id || d.id)] = user;
+                    usersMap[String(d.id)] = user;
+                });
+            }
+            const usersWithoutProfile = userIds.filter(id => !usersMap[String(id)]);
+            await Promise.all(usersWithoutProfile.map(async id => {
+                const userDoc = await db.collection('users').doc(String(id)).get();
+                if (!userDoc.exists) return;
+                const user = userDoc.data();
+                usersMap[String(id)] = user;
+                usersMap[String(user.users_id || userDoc.id)] = user;
+            }));
+        }
+
+        if (studentFilter) {
+            logs = logs.filter(log =>
+                (log.userName || '').toLowerCase().includes(studentFilter) ||
+                (log.userEmail || '').toLowerCase().includes(studentFilter)
+            );
+        }
+
+        if (equipmentFilter) {
+            logs = logs.filter(log =>
+                (log.equipmentName || '').toLowerCase().includes(equipmentFilter) ||
+                (log.equipmentCode || '').toLowerCase().includes(equipmentFilter)
+            );
+        }
+
+        const sortValue = document.getElementById('logsSort')?.value || 'borrowedAt_desc';
+        const [field, order] = sortValue.split('_');
+        const eventStatus = {
+            borrowed: 'borrowed',
+            extended: 'borrowed',
+            returned: 'returned',
+            return_requested: 'pending_return',
+            pending_borrow: 'pending_borrow',
+            rejected: 'rejected'
+        };
+        let activities = logs.flatMap(log => getBorrowingActivityEvents(log).map(event => ({ log, event })));
+        if (startDate) {
+            const start = new Date(`${startDate}T00:00:00`);
+            activities = activities.filter(({ event }) => {
+                const date = event.at?.toDate ? event.at.toDate() : new Date(event.at);
+                return !Number.isNaN(date.getTime()) && date >= start;
+            });
+        }
+        if (endDate) {
+            const end = new Date(`${endDate}T23:59:59.999`);
+            activities = activities.filter(({ event }) => {
+                const date = event.at?.toDate ? event.at.toDate() : new Date(event.at);
+                return !Number.isNaN(date.getTime()) && date <= end;
+            });
+        }
+        activities.sort((a, b) => {
+            let valA;
+            let valB;
+            if (field === 'borrowedAt') {
+                const dateA = a.event.at?.toDate ? a.event.at.toDate() : new Date(a.event.at);
+                const dateB = b.event.at?.toDate ? b.event.at.toDate() : new Date(b.event.at);
+                valA = Number.isNaN(dateA.getTime()) ? 0 : dateA.getTime();
+                valB = Number.isNaN(dateB.getTime()) ? 0 : dateB.getTime();
+            } else {
+                valA = (a.log.equipmentName || '').toLowerCase();
+                valB = (b.log.equipmentName || '').toLowerCase();
+            }
+
+            if (valA < valB) return order === 'asc' ? -1 : 1;
+            if (valA > valB) return order === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        if (activities.length === 0) {
+            logsList.innerHTML = `
+                <div class="empty-state">
+                    <h3>No logs found</h3>
+                    <p>Try adjusting your filters</p>
+                </div>
+            `;
+        } else {
+            const activityLabels = {
+                borrowed: 'Borrowed',
+                extended: 'Time Extended',
+                returned: 'Returned',
+                return_requested: 'Return Requested',
+                pending_borrow: 'Pending Approval',
+                rejected: 'Rejected'
+            };
+            borrowingLogDetails = activities.map(({ log, event }) => ({ log, event, userDoc: usersMap[log.userId] || {} }));
+            initializeBorrowingLogDetails(logsList);
+            logsList.innerHTML = activities.map(({ log, event }, index) => {
+                const status = eventStatus[event.type] || log.status;
+                const statusLabel = activityLabels[event.type] || capitalize(event.type);
+                const userDoc = usersMap[log.userId] || {};
+                const displayName = (userDoc.firstName && userDoc.lastName) ? `${userDoc.firstName} ${userDoc.lastName}` : log.userName;
+                const courseInfo = userDoc.course ? userDoc.course : 'N/A';
+                const yearSecInfo = userDoc.yearSection ? userDoc.yearSection : ((userDoc.yearLevel && userDoc.section) ? `${userDoc.yearLevel}-${userDoc.section}` : 'N/A');
+                let eventDetails = '';
+                if (event.type === 'borrowed') {
+                    eventDetails = `
+                        <div class="log-field"><span class="log-label">Due Time:</span><span class="log-value">${escapeBorrowingHistoryHtml(event.expectedReturnTime || log.expectedReturnTime || 'N/A')}</span></div>
+                        ${(event.staffName || log.approvedByName || log.approvedBy) ? `<div class="log-field"><span class="log-label">Approved By:</span><span class="log-value">${escapeBorrowingHistoryHtml(event.staffName || log.approvedByName || log.approvedBy)}</span></div>` : ''}
+                        ${event.staffPhotoURL ? `<div class="log-field"><span class="log-label">Staff Verification:</span><span class="log-value"><img src="${escapeBorrowingHistoryHtml(event.staffPhotoURL)}" alt="${escapeBorrowingHistoryHtml(event.staffName || 'Approving staff')}" data-zoom-src="${escapeBorrowingHistoryHtml(event.staffPhotoURL)}" style="width:48px;height:48px;object-fit:cover;border-radius:50%;cursor:zoom-in;"></span></div>` : ''}
+                    `;
+                } else if (event.type === 'extended') {
+                    eventDetails = `
+                        <div class="log-field"><span class="log-label">Previous Due Time:</span><span class="log-value">${escapeBorrowingHistoryHtml(event.previousReturnTime || 'N/A')}</span></div>
+                        <div class="log-field"><span class="log-label">New Due Time:</span><span class="log-value">${escapeBorrowingHistoryHtml(event.expectedReturnTime || 'N/A')}</span></div>
+                        ${event.reason ? `<div class="log-field"><span class="log-label">Reason:</span><span class="log-value">${escapeBorrowingHistoryHtml(event.reason)}</span></div>` : ''}
+                        ${event.staffName ? `<div class="log-field"><span class="log-label">Approved By:</span><span class="log-value">${escapeBorrowingHistoryHtml(event.staffName)}</span></div>` : ''}
+                        ${event.staffPhotoURL ? `<div class="log-field"><span class="log-label">Staff Verification:</span><span class="log-value"><img src="${escapeBorrowingHistoryHtml(event.staffPhotoURL)}" alt="${escapeBorrowingHistoryHtml(event.staffName || 'Approving staff')}" data-zoom-src="${escapeBorrowingHistoryHtml(event.staffPhotoURL)}" style="width:48px;height:48px;object-fit:cover;border-radius:50%;cursor:zoom-in;"></span></div>` : ''}
+                    `;
+                } else if (event.type === 'returned' || event.type === 'return_requested') {
+                    eventDetails = `
+                        ${event.condition ? `<div class="log-field"><span class="log-label">${event.type === 'returned' ? 'Return Condition:' : 'Reported Condition:'}</span><span class="log-value">${escapeBorrowingHistoryHtml(capitalize(event.condition))}</span></div>` : ''}
+                        ${event.notes ? `<div class="log-field"><span class="log-label">Return Notes:</span><span class="log-value">${escapeBorrowingHistoryHtml(event.notes)}</span></div>` : ''}
+                        ${event.staffName ? `<div class="log-field"><span class="log-label">Processed By:</span><span class="log-value">${escapeBorrowingHistoryHtml(event.staffName)}</span></div>` : ''}
+                        ${event.staffPhotoURL ? `<div class="log-field"><span class="log-label">Staff Verification:</span><span class="log-value"><img src="${escapeBorrowingHistoryHtml(event.staffPhotoURL)}" alt="${escapeBorrowingHistoryHtml(event.staffName || 'Approving staff')}" data-zoom-src="${escapeBorrowingHistoryHtml(event.staffPhotoURL)}" style="width:48px;height:48px;object-fit:cover;border-radius:50%;cursor:zoom-in;"></span></div>` : ''}
+                    `;
+                }
+
+                return `
+                <div class="log-item log-item-clickable" data-log-detail-index="${index}" tabindex="0" role="button" aria-label="View full borrowing details for ${escapeBorrowingHistoryHtml(log.equipmentName || 'Equipment')}">
+                    <div class="log-item-header">
+                        <span class="log-item-title">${escapeBorrowingHistoryHtml(log.equipmentName || 'Equipment')}</span>
+                        <span class="history-status ${escapeBorrowingHistoryHtml(status)}">${escapeBorrowingHistoryHtml(statusLabel)}</span>
+                    </div>
+
+                    <div class="log-item-info">
+                        <div class="log-field"><span class="log-label">Borrower Name:</span><span class="log-value">${escapeBorrowingHistoryHtml(displayName || 'N/A')}</span></div>
+                        <div class="log-field"><span class="log-label">${userDoc.role === 'professor' ? 'Department' : 'Course'}:</span><span class="log-value">${escapeBorrowingHistoryHtml(userDoc.role === 'professor' ? (userDoc.department || 'N/A') : courseInfo)}</span></div>
+                        ${userDoc.role !== 'professor' ? `<div class="log-field"><span class="log-label">Year & Section:</span><span class="log-value">${escapeBorrowingHistoryHtml(yearSecInfo)}</span></div>` : ''}
+                        <div class="log-field"><span class="log-label">Email:</span><span class="log-value">${escapeBorrowingHistoryHtml(log.userEmail || 'N/A')}</span></div>
+                        <div class="log-field"><span class="log-label">Mobile:</span><span class="log-value">${escapeBorrowingHistoryHtml(log.userMobile || 'N/A')}</span></div>
+                        <div class="log-field"><span class="log-label">ID Number:</span><span class="log-value">${escapeBorrowingHistoryHtml(log.studentId || log.facultyId || 'N/A')}</span></div>
+                        <div class="log-field"><span class="log-label">Activity Date:</span><span class="log-value">${escapeBorrowingHistoryHtml(formatDate(event.at))}</span></div>
+                        ${eventDetails}
+                        <div class="log-field"><span class="log-label">Room:</span><span class="log-value">${escapeBorrowingHistoryHtml(log.room || 'N/A')}</span></div>
+                        <div class="log-field"><span class="log-label">Purpose:</span><span class="log-value">${escapeBorrowingHistoryHtml(log.purpose || 'N/A')}</span></div>
+                    </div>
+                    <span class="log-item-open-hint">Click to view complete details</span>
+                </div>
+            `;
+            }).join('');
+        }
+    } catch (error) {
+        console.error('Error loading logs:', error);
+        logsList.innerHTML = `
+            <div class="empty-state">
+                <h3>Error loading logs</h3>
+                <p>Please try again later</p>
+            </div>
+        `;
+    }
+}
+
+function initializeBorrowingLogDetails(logsList) {
+    if (logsList.dataset.detailListenerAttached === 'true') return;
+    logsList.addEventListener('click', event => {
+        if (event.target.closest('img')) return;
+        const card = event.target.closest('[data-log-detail-index]');
+        if (card) openBorrowingLogDetail(Number(card.dataset.logDetailIndex));
+    });
+    logsList.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const card = event.target.closest('[data-log-detail-index]');
+        if (!card) return;
+        event.preventDefault();
+        openBorrowingLogDetail(Number(card.dataset.logDetailIndex));
+    });
+
+    const modal = document.getElementById('borrowingLogDetailModal');
+    const closeModal = () => modal?.classList.remove('active');
+    modal?.querySelectorAll('[data-close-borrowing-log]').forEach(button => button.addEventListener('click', closeModal));
+    modal?.addEventListener('click', event => {
+        if (event.target === modal) closeModal();
+    });
+    if (modal && modal.dataset.escapeListenerAttached !== 'true') {
+        document.addEventListener('keydown', event => {
+            if (event.key === 'Escape') closeModal();
+        });
+        modal.dataset.escapeListenerAttached = 'true';
+    }
+    logsList.dataset.detailListenerAttached = 'true';
+}
+
+function openBorrowingLogDetail(index) {
+    const detail = borrowingLogDetails[index];
+    const modal = document.getElementById('borrowingLogDetailModal');
+    const content = document.getElementById('borrowingLogDetailContent');
+    if (!detail || !modal || !content) return;
+
+    const { log, event, userDoc } = detail;
+    const escape = window.escapeBorrowingHistoryHtml;
+    const hasValue = input => input !== undefined && input !== null && String(input).trim() !== '' &&
+        !['n/a', 'na', 'not specified', 'unknown'].includes(String(input).trim().toLowerCase());
+    const firstValue = (...inputs) => inputs.find(hasValue);
+    const value = input => escape(hasValue(input) ? input : '');
+    const field = (label, input, format = value) => hasValue(input)
+        ? `<div class="log-field"><span class="log-label">${escape(label)}:</span><span class="log-value">${format(input)}</span></div>`
+        : '';
+    const dateField = (label, input) => hasValue(input) ? field(label, input, date => escape(formatDate(date))) : '';
+    const timeField = (label, input) => hasValue(input) ? field(label, input, time => escape(formatTimeTo12h(time))) : '';
+    const role = firstValue(userDoc.role, log.userRole) ||
+        (firstValue(log.facultyId, userDoc.facultyId) ? 'professor' : firstValue(log.studentId, userDoc.studentId) ? 'student' : '');
+    const borrowerName = hasValue(userDoc.firstName) && hasValue(userDoc.lastName)
+        ? `${userDoc.firstName} ${userDoc.lastName}`
+        : firstValue(userDoc.name, log.userName);
+    const courseOrDepartment = role === 'professor' ? userDoc.department : userDoc.course;
+    const yearSection = firstValue(userDoc.yearSection) ||
+        (hasValue(userDoc.yearLevel) && hasValue(userDoc.section) ? `${userDoc.yearLevel}-${userDoc.section}` : '');
+    const events = window.getBorrowingActivityEvents(log);
+    const borrowedEvent = events.find(item => item.type === 'borrowed' && item.staffPhotoURL) ||
+        events.find(item => item.type === 'borrowed');
+    const returnedEvent = [...events].reverse().find(item => item.type === 'returned' && item.staffPhotoURL) ||
+        [...events].reverse().find(item => item.type === 'returned');
+    const rejectedEvent = [...events].reverse().find(item => item.type === 'rejected' && item.staffPhotoURL);
+    const extensionEvents = events.filter(item => item.type === 'extended' && item.staffPhotoURL);
+    const extensionPhotos = extensionEvents.map((item, index) => ({
+        label: `Staff Photo - Extend Time${extensionEvents.length > 1 ? ` (${index + 1})` : ''}`,
+        src: item.staffPhotoURL,
+        detail: [item.staffName, item.at ? formatDate(item.at) : ''].filter(hasValue).join(' · ')
+    }));
+    const seenTimelineEvents = new Set();
+    const timelineEvents = events
+        .filter(item => ['borrowed', 'returned', 'extended'].includes(item.type))
+        .map((item, index) => ({ item, index, time: item.at?.toDate ? item.at.toDate().getTime() : new Date(item.at || '').getTime() }))
+        .sort((a, b) => {
+            const timeA = Number.isNaN(a.time) ? 0 : a.time;
+            const timeB = Number.isNaN(b.time) ? 0 : b.time;
+            return timeA - timeB || a.index - b.index;
+        })
+        .filter(({ item }) => {
+            const key = item.type === 'extended'
+                ? `extended:${String(item.at || '')}:${item.expectedReturnTime || ''}:${item.staffName || ''}`
+                : item.type;
+            if (seenTimelineEvents.has(key)) return false;
+            seenTimelineEvents.add(key);
+            return true;
+        });
+    const timelineLabels = {
+        borrowed: 'Borrowed',
+        returned: 'Return',
+        extended: 'Extended Time'
+    };
+    const eventRows = timelineEvents.map(({ item }) => `
+        <div class="borrowing-log-timeline-item">
+            <div class="borrowing-log-timeline-heading">
+                <strong>${escape(timelineLabels[item.type])}</strong>
+                ${hasValue(item.at) ? `<time>${escape(formatDate(item.at))}</time>` : ''}
+            </div>
+            ${item.type !== 'borrowed' && hasValue(item.staffName) ? `<span><strong>Staff:</strong> ${value(item.staffName)}</span>` : ''}
+            ${item.type === 'returned' && hasValue(item.condition) ? `<span><strong>Condition:</strong> ${value(capitalize(item.condition))}</span>` : ''}
+            ${item.type === 'returned' && hasValue(item.notes) ? `<span><strong>Notes:</strong> ${value(item.notes)}</span>` : ''}
+            ${item.type === 'extended' && hasValue(item.reason) ? `<span><strong>Reason:</strong> ${value(item.reason)}</span>` : ''}
+            ${hasValue(item.previousReturnTime) ? `<span><strong>Previous due time:</strong> ${value(formatTimeTo12h(item.previousReturnTime))}</span>` : ''}
+            ${hasValue(item.expectedReturnTime) ? `<span><strong>Expected return time:</strong> ${value(formatTimeTo12h(item.expectedReturnTime))}</span>` : ''}
+        </div>
+    `).join('');
+    const returnPhoto = log.returnPhoto;
+    const idNumber = firstValue(log.studentId, log.facultyId, userDoc.studentId, userDoc.facultyId);
+    const evidencePhotos = [
+        log.studentIdPhoto && {
+            label: 'Borrower ID Photo',
+            src: log.studentIdPhoto,
+            detail: [log.studentIdPhotoCapturedByName, log.studentIdPhotoCapturedAt ? formatDate(log.studentIdPhotoCapturedAt) : ''].filter(hasValue).join(' · ')
+        },
+        borrowedEvent?.staffPhotoURL && {
+            label: 'Staff Photo - Confirm Borrow',
+            src: borrowedEvent.staffPhotoURL,
+            detail: [borrowedEvent.staffName, borrowedEvent.at ? formatDate(borrowedEvent.at) : ''].filter(hasValue).join(' · ')
+        },
+        returnedEvent?.staffPhotoURL && {
+            label: 'Staff Photo - Confirm Return',
+            src: returnedEvent.staffPhotoURL,
+            detail: [returnedEvent.staffName, returnedEvent.at ? formatDate(returnedEvent.at) : ''].filter(hasValue).join(' · ')
+        },
+        rejectedEvent?.staffPhotoURL && {
+            label: 'Staff Photo - Reject Borrow',
+            src: rejectedEvent.staffPhotoURL,
+            detail: [rejectedEvent.staffName, rejectedEvent.at ? formatDate(rejectedEvent.at) : ''].filter(hasValue).join(' · ')
+        },
+        ...extensionPhotos,
+        returnPhoto && {
+            label: 'Returned Item Photo',
+            src: returnPhoto,
+            detail: ''
+        }
+    ].filter(Boolean);
+
+    content.innerHTML = `
+        <section class="borrowing-log-detail-section">
+            <h3>Borrowing Record</h3>
+            <div class="log-item-info">
+                ${field('Record Status', capitalize(log.status))}
+                ${field('Borrowing Record ID', log.id)}
+            </div>
+        </section>
+        <section class="borrowing-log-detail-section">
+            <h3>Borrower</h3>
+            <div class="log-item-info">
+                ${field('Name', borrowerName)}
+                ${field('Role', role)}
+                ${field('Email', firstValue(log.userEmail, userDoc.email))}
+                ${field('Mobile', firstValue(log.userMobile, userDoc.mobile))}
+                ${field(role === 'professor' ? 'Department' : 'Course', courseOrDepartment)}
+                ${role === 'professor' ? '' : field('Year & Section', yearSection)}
+                ${field(role === 'professor' ? 'Faculty ID' : 'Student ID', idNumber)}
+            </div>
+        </section>
+        <section class="borrowing-log-detail-section">
+            <h3>Equipment & Borrowing</h3>
+            <div class="log-item-info">
+                ${field('Equipment', log.equipmentName)}
+                ${field('Equipment Code', log.equipmentCode || log.equipmentId)}
+                ${field('Category', log.equipmentCategory)}
+                ${field('Room', log.room)}
+                ${field('Purpose', log.purpose)}
+                ${field('Subject', log.subject)}
+                ${dateField('Borrowed', log.borrowedAt)}
+                ${timeField('Expected Return', log.expectedReturnTime)}
+                ${timeField('Original Expected Return', log.originalExpectedReturnTime)}
+                ${timeField('Requested Extension Return', log.requestedReturnTime)}
+                ${dateField('Actual Return', log.returnedAt)}
+                ${field('Condition on Borrow', log.conditionOnBorrow)}
+                ${field('Return Condition', capitalize(firstValue(log.returnCondition, log.pendingReturnCondition)))}
+                ${field('Return Notes', firstValue(log.returnNotes, log.pendingReturnNotes))}
+                ${typeof log.wasOverdue === 'boolean' ? field('Overdue', log.wasOverdue ? 'Yes' : 'No') : ''}
+            </div>
+            <div class="log-item-info" style="margin-top:1rem;">
+                ${field('Approved By', firstValue(log.approvedByName, log.approvedBy, borrowedEvent?.staffName))}
+                ${dateField('Approval Date', firstValue(log.approvedAt, borrowedEvent?.at))}
+                ${field('Return Processed By', firstValue(log.returnApprovedByName, log.returnConfirmedByName, returnedEvent?.staffName))}
+                ${dateField('Return Processed Date', firstValue(log.returnApprovedAt, log.returnConfirmedAt, returnedEvent?.at))}
+                ${field('Return Rejected By', log.returnRejectedByName)}
+                ${dateField('Return Rejected Date', log.returnRejectedAt)}
+                ${field('Rejection Reason', log.rejectionReason)}
+                ${field('Extension Approved By', log.extensionApprovedByName)}
+                ${dateField('Extension Approved Date', log.extensionApprovedAt)}
+                ${field('Extension Reason', log.extensionReason)}
+            </div>
+        </section>
+        ${evidencePhotos.length ? `
+            <section class="borrowing-log-detail-section">
+                <h3>Verification Photos</h3>
+                <div class="borrowing-log-evidence-grid">
+                    ${evidencePhotos.map(photo => `
+                        <div class="borrowing-log-photo">
+                            <span class="log-label">${escape(photo.label)}</span>
+                            <img src="${escape(photo.src)}" alt="${escape(photo.label)}" data-zoom-src="${escape(photo.src)}">
+                            ${photo.detail ? `<span class="borrowing-log-photo-detail">${escape(photo.detail)}</span>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            </section>
+        ` : ''}
+        <section class="borrowing-log-detail-section">
+            <h3>Activity Timeline</h3>
+            ${eventRows || '<p>No activity history is available.</p>'}
+        </section>
+    `;
+    document.getElementById('borrowingLogDetailTitle').textContent = log.equipmentName || 'Borrowing Details';
+    modal.classList.add('active');
+}
+
+function activityEventLabel(type) {
+    return ({
+        borrowed: 'Borrowed',
+        extended: 'Time Extended',
+        returned: 'Returned',
+        return_requested: 'Return Requested',
+        pending_borrow: 'Pending Approval',
+        rejected: 'Rejected'
+    })[type] || capitalize(type || 'Activity');
+}
+
+function initializeExport() {
+    const exportLogsBtn = document.getElementById('exportLogsBtn');
+    const applyFilterBtn = document.getElementById('applyFilterBtn');
+
+    if (applyFilterBtn) applyFilterBtn.addEventListener('click', loadBorrowingLogs);
+
+    const fmtDate = (ts) => {
+        if (!ts || !ts.toDate) return "N/A";
+        const d = ts.toDate();
+        const pad = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+
+    const safe = (v) => (v ?? "N/A").toString();
+
+    const styles = {
+        title: {
+            font: { bold: true, sz: 16, color: { rgb: "FFFFFF" } },
+            fill: { fgColor: { rgb: "0D9488" } },
+            alignment: { horizontal: "left", vertical: "center" }
+        },
+        summaryLabel: {
+            font: { sz: 10, color: { rgb: "64748B" } },
+            fill: { fgColor: { rgb: "F8FAFC" } },
+            border: {
+                top: { style: "thin", color: { rgb: "E2E8F0" } },
+                left: { style: "thin", color: { rgb: "E2E8F0" } },
+                right: { style: "thin", color: { rgb: "E2E8F0" } }
+            }
+        },
+        summaryVal: {
+            font: { bold: true, sz: 12, color: { rgb: "0F172A" } },
+            fill: { fgColor: { rgb: "F8FAFC" } },
+            alignment: { horizontal: "center" },
+            border: {
+                bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+                left: { style: "thin", color: { rgb: "E2E8F0" } },
+                right: { style: "thin", color: { rgb: "E2E8F0" } }
+            }
+        },
+        summaryOverdue: {
+            font: { bold: true, sz: 12, color: { rgb: "B91C1C" } },
+            fill: { fgColor: { rgb: "F8FAFC" } },
+            alignment: { horizontal: "center" },
+            border: {
+                bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+                left: { style: "thin", color: { rgb: "E2E8F0" } },
+                right: { style: "thin", color: { rgb: "E2E8F0" } }
+            }
+        },
+        catHeader: {
+            font: { bold: true, sz: 11, color: { rgb: "FFFFFF" } },
+            fill: { fgColor: { rgb: "0D9488" } },
+            alignment: { horizontal: "left", vertical: "center" }
+        },
+        colHeader: {
+            font: { bold: true, sz: 9, color: { rgb: "FFFFFF" } },
+            fill: { fgColor: { rgb: "115E59" } },
+            alignment: { horizontal: "center" }
+        },
+        cell: {
+            font: { sz: 9 },
+            alignment: { vertical: "center" },
+            border: { bottom: { style: "thin", color: { rgb: "F1F5F9" } } }
+        },
+        cellLate: {
+            font: { sz: 9, color: { rgb: "B91C1C" }, bold: true },
+            alignment: { vertical: "center" },
+            border: { bottom: { style: "thin", color: { rgb: "F1F5F9" } } }
+        },
+        subtotal: {
+            font: { bold: true, sz: 9 },
+            fill: { fgColor: { rgb: "F8FAFC" } },
+            alignment: { horizontal: "right" }
+        }
+    };
+
+    function applyStyle(ws, r, c, s) {
+        const addr = XLSX.utils.encode_cell({ r, c });
+        if (!ws[addr]) ws[addr] = { t: "s", v: "" };
+        ws[addr].s = s;
+    }
+
+    const calcDelay = (expected, returned, borrowed) => {
+        if (!expected || !returned || !borrowed) return { text: "N/A", late: false };
+        try {
+            const retDate = returned.toDate ? returned.toDate() : new Date(returned);
+            const borDate = borrowed.toDate ? borrowed.toDate() : new Date(borrowed);
+            const [hh, mm] = expected.split(':').map(Number);
+
+            const expDate = new Date(borDate);
+            expDate.setHours(hh, mm, 0, 0);
+            if (expDate < borDate) expDate.setDate(expDate.getDate() + 1);
+
+            const diffMin = Math.round((retDate - expDate) / (1000 * 60));
+            if (diffMin <= 0) return { text: "On Time", late: false };
+
+            const h = Math.floor(diffMin / 60);
+            const m = diffMin % 60;
+            return { text: h > 0 ? `${h}h ${m}m late` : `${m}m late`, late: true };
+        } catch (e) { return { text: "Error", late: false }; }
+    };
+
+    if (exportLogsBtn) {
+        exportLogsBtn.addEventListener("click", async () => {
+            try {
+                showToast("Preparing sophisticated report...", "info");
+                const snapshot = await db.collection("borrowings").orderBy("borrowedAt", "desc").get();
+                const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                const wb = XLSX.utils.book_new();
+                const wsData = [
+                    ["BORROWING PERFORMANCE REPORT"], // R0
+                    [], // R1
+                    ["TOTAL RECORDS", "", "", "ON-TIME RETURNS", "", "", "OVERDUE FREQUENCY"], // R2
+                    [logs.length, "", "", logs.filter(l => l.status === 'returned' && !l.wasOverdue).length, "", "", logs.filter(l => l.wasOverdue).length], // R3
+                    [], // R4
+                ];
+
+                const categories = [...new Set(logs.map(l => l.equipmentCategory || "Uncategorized"))];
+                let currentRow = 5;
+
+                const headers = ["Equipment Item", "Student", "Room", "Borrowed At", "Expected Return", "Actual Return", "Delay/Difference", "Return Condition", "Return Notes", "Equipment Follow-up"];
+
+                categories.forEach(cat => {
+                    wsData.push([cat.toUpperCase(), "", "", "", "", "", "", "", "", ""]); // Category row
+                    wsData.push(headers); // Header row
+                    const catLogs = logs.filter(l => (l.equipmentCategory || "Uncategorized") === cat);
+
+                    catLogs.forEach(log => {
+                        const delay = calcDelay(log.expectedReturnTime, log.returnedAt, log.borrowedAt);
+                        const returnCondition = log.returnCondition || log.pendingReturnCondition || "";
+                        wsData.push([
+                            log.equipmentName,
+                            log.userName,
+                            log.room,
+                            fmtDate(log.borrowedAt),
+                            log.expectedReturnTime,
+                            log.status === 'returned' ? fmtDate(log.returnedAt) : "Not Returned",
+                            delay.text,
+                            capitalize(returnCondition),
+                            log.returnNotes || log.pendingReturnNotes || "",
+                            log.status === 'pending_return' ? "Pending confirmation" :
+                                (log.status === 'returned' && returnCondition.toLowerCase() === 'damaged' ? "Maintenance" :
+                                    (log.status === 'returned' ? "Available" : "N/A"))
+                        ]);
+                    });
+                    wsData.push(["Subtotal", "", "", "", "", "", `${catLogs.length} items`, "", "", ""]);
+                    wsData.push([]); // Gap
+                });
+
+                const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+                // Apply Styling
+                applyStyle(ws, 0, 0, styles.title);
+                ws['!merges'] = [
+                    { s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }, // Title
+                    { s: { r: 2, c: 0 }, e: { r: 2, c: 1 } }, // Labels
+                    { s: { r: 2, c: 3 }, e: { r: 2, c: 4 } },
+                    { s: { r: 2, c: 6 }, e: { r: 2, c: 6 } },
+                    { s: { r: 3, c: 0 }, e: { r: 3, c: 1 } }, // Values
+                    { s: { r: 3, c: 3 }, e: { r: 3, c: 4 } },
+                    { s: { r: 3, c: 6 }, e: { r: 3, c: 6 } }
+                ];
+
+                // Summary Styles
+                [0, 3, 6].forEach(c => {
+                    applyStyle(ws, 2, c, styles.summaryLabel);
+                    applyStyle(ws, 3, c, c === 6 ? styles.summaryOverdue : styles.summaryVal);
+                    // Fill merges
+                    if (c < 6) {
+                        applyStyle(ws, 2, c + 1, styles.summaryLabel);
+                        applyStyle(ws, 3, c + 1, styles.summaryVal);
+                    }
+                });
+
+                let r = 5;
+                categories.forEach(cat => {
+                    applyStyle(ws, r, 0, styles.catHeader);
+                    for (let i = 1; i < 10; i++) applyStyle(ws, r, i, styles.catHeader);
+                    ws['!merges'].push({ s: { r: r, c: 0 }, e: { r: r, c: 9 } });
+                    r++;
+
+                    for (let i = 0; i < 10; i++) applyStyle(ws, r, i, styles.colHeader);
+                    r++;
+
+                    const catLogs = logs.filter(l => (l.equipmentCategory || "Uncategorized") === cat);
+                    catLogs.forEach(log => {
+                        const delay = calcDelay(log.expectedReturnTime, log.returnedAt, log.borrowedAt);
+                        for (let i = 0; i < 10; i++) {
+                            applyStyle(ws, r, i, i === 6 && delay.late ? styles.cellLate : styles.cell);
+                        }
+                        r++;
+                    });
+
+                    applyStyle(ws, r, 0, styles.subtotal);
+                    for (let i = 1; i < 10; i++) applyStyle(ws, r, i, styles.subtotal);
+                    r += 2;
+                });
+
+                ws['!cols'] = [{ wch: 25 }, { wch: 20 }, { wch: 10 }, { wch: 18 }, { wch: 15 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 30 }, { wch: 24 }];
+
+                XLSX.utils.book_append_sheet(wb, ws, "Performance Report");
+                XLSX.writeFile(wb, `MISLend-Performance-${new Date().toISOString().split('T')[0]}.xlsx`);
+                showToast("Budget-style report generated!", "success");
+            } catch (error) {
+                console.error("Export Error:", error);
+                showToast("Failed to generate report", "error");
+            }
+        });
+    }
+}
+
+function initializeTopbarActions() {
+    const searchInput = document.getElementById('topbarSearchInput');
+    window.initializeDashboardFieldSearch('equipmentSearchInput', async () =>
+        (await window.getDashboardEquipmentItems()).map(item => ({
+            value: item.name || item.equipmentId,
+            title: item.name || item.equipmentId || 'Equipment',
+            detail: [item.equipmentId, item.category, item.status].filter(Boolean).join(' · ')
+        }))
+    );
+    window.initializeDashboardFieldSearch('studentFilter', async () => {
+        const borrowings = await window.getDashboardBorrowingItems();
+        return borrowings.flatMap(log => [
+            log.userName && {
+                value: log.userName,
+                title: log.userName,
+                detail: log.userEmail || 'Borrower'
+            },
+            log.userEmail && {
+                value: log.userEmail,
+                title: log.userName || log.userEmail,
+                detail: log.userEmail
+            }
+        ].filter(Boolean));
+    });
+    window.initializeDashboardFieldSearch('equipmentFilter', async () => {
+        const borrowings = await window.getDashboardBorrowingItems();
+        return borrowings.flatMap(log => [
+            log.equipmentName && {
+                value: log.equipmentName,
+                title: log.equipmentName,
+                detail: log.equipmentCode || 'Equipment'
+            },
+            log.equipmentCode && {
+                value: log.equipmentCode,
+                title: log.equipmentName || log.equipmentCode,
+                detail: log.equipmentCode
+            }
+        ].filter(Boolean));
+    });
+    window.initializeDashboardSearch({
+        onSelect: (result, query) => {
+            if (result.kind === 'equipment') {
+                const equipmentSearch = document.getElementById('equipmentSearchInput');
+                if (equipmentSearch) equipmentSearch.value = query;
+                window.switchView?.('equipment');
+                return;
+            }
+            window.switchView?.(result.viewId);
+        }
+    });
+    window.initializeNotificationDropdown(loadAdminNotifications);
+
+    document.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+            event.preventDefault();
+            searchInput?.focus();
+        }
+    });
+}
+
+function updateAdminNotificationBadge() {
+    const badge = document.getElementById('topbarNotificationBadge');
+    if (!badge) return;
+    if (document.getElementById('notificationDropdown')?.dataset.initialized === 'true') {
+        window.refreshNotificationDropdown?.();
+        return;
+    }
+    const count = adminNotificationCounts.borrowings + adminNotificationCounts.currentBorrowed + adminNotificationCounts.users + adminNotificationCounts.incidents;
+    badge.textContent = count > 9 ? '9+' : String(count);
+    badge.hidden = count === 0;
+}
+
+async function loadAdminNotifications() {
+    const incidentsQuery = isHeadAdmin()
+        ? db.collection('incidents').where('status', 'in', ['pending', 'under_review']).get()
+        : Promise.resolve({ docs: [] });
+    const [borrowingsSnapshot, currentBorrowedSnapshot, usersSnapshot, incidentsSnapshot] = await Promise.all([
+        db.collection('borrowings')
+            .where('status', 'in', ['pending_borrow', 'pending_return', 'pending_extension'])
+            .get(),
+        db.collection('borrowings').where('status', '==', 'borrowed').get(),
+        db.collection('users').where('status', '==', 'pending').get(),
+        incidentsQuery
+    ]);
+    const notifications = [];
+    const borrowGroups = new Map();
+
+    borrowingsSnapshot.docs.forEach(doc => {
+        const borrowing = { ...doc.data(), notificationDocId: doc.id };
+        if (borrowing.status === 'pending_borrow') {
+            const groupId = borrowing.submissionId || doc.id;
+            if (!borrowGroups.has(groupId)) borrowGroups.set(groupId, []);
+            borrowGroups.get(groupId).push(borrowing);
+            return;
+        }
+        const requestType = borrowing.status === 'pending_return'
+            ? 'Return request'
+            : borrowing.status === 'pending_extension'
+                ? 'Extension request'
+                : 'Borrow request';
+        notifications.push({
+            id: `borrowing:${borrowing.notificationDocId}:${borrowing.status}`,
+            title: `${requestType} from ${borrowing.userName || 'a user'}`,
+            message: borrowing.equipmentName || 'Equipment request needs review.',
+            view: 'approvals',
+            createdAt: borrowing.createdAt || borrowing.requestedAt || borrowing.borrowedAt
+        });
+    });
+
+    borrowGroups.forEach((group, groupId) => {
+        const first = group[0];
+        const names = group.map(item => item.equipmentName).filter(Boolean);
+        notifications.push({
+            id: `borrow-submission:${groupId}`,
+            title: `Borrow request from ${first.userName || 'a user'}`,
+            message: names.length ? names.join(', ') : `${group.length} item${group.length === 1 ? '' : 's'} need approval.`,
+            view: 'approvals',
+            createdAt: first.createdAt || first.requestedAt || first.borrowedAt
+        });
+    });
+
+    currentBorrowedSnapshot.docs.forEach(doc => {
+        const borrowing = doc.data();
+        notifications.push({
+            id: `borrowing:${doc.id}:borrowed`,
+            title: `Currently borrowed by ${borrowing.userName || 'a user'}`,
+            message: borrowing.equipmentName || 'Open Currently Borrowed to review this loan.',
+            view: 'borrowed',
+            createdAt: borrowing.createdAt || borrowing.borrowedAt
+        });
+    });
+
+    usersSnapshot.docs.forEach(doc => {
+        const user = doc.data();
+        notifications.push({
+            id: `user:${doc.id}:pending`,
+            title: 'Account awaiting approval',
+            message: user.name || user.email || 'A new user needs review.',
+            view: 'users',
+            createdAt: user.createdAt
+        });
+    });
+
+    incidentsSnapshot.docs.forEach(doc => {
+        const incident = doc.data();
+        notifications.push({
+            id: `incident:${doc.id}:${incident.status || 'pending'}`,
+            title: 'Incident report needs review',
+            message: incident.equipmentName || incident.title || 'Open incident reports to review.',
+            view: 'incidents',
+            createdAt: incident.createdAt
+        });
+    });
+
+    return notifications;
+}
+
+function initializeUserManagement() {
+    const addUserBtn = document.getElementById('addUserBtn');
+    const addUserModal = document.getElementById('addUserModal');
+    const closeAddUserModal = document.getElementById('closeAddUserModal');
+    const cancelAddUser = document.getElementById('cancelAddUser');
+    const addUserForm = document.getElementById('addUserForm');
+    const newUserRole = document.getElementById('newUserRole');
+    const additionalFields = document.getElementById('additionalStudentFields');
+
+    const additionalAdminFields = document.getElementById('additionalAdminFields');
+    const staffNameModal = document.getElementById('staffNameModal');
+    const staffNameForm = document.getElementById('staffNameForm');
+    const staffNamesTable = document.getElementById('adminStaffNamesTable');
+
+    document.getElementById('addStaffNameBtn')?.addEventListener('click', () => openStaffNameModal());
+    document.getElementById('closeStaffNameModal')?.addEventListener('click', closeStaffNameModal);
+    document.getElementById('cancelStaffNameBtn')?.addEventListener('click', closeStaffNameModal);
+    staffNameModal?.addEventListener('click', event => {
+        if (event.target === staffNameModal) closeStaffNameModal();
+    });
+    staffNameForm?.addEventListener('submit', saveStaffName);
+    staffNamesTable?.addEventListener('click', event => {
+        const button = event.target.closest('button[data-action]');
+        if (!button) return;
+        const id = button.dataset.id;
+        if (button.dataset.action === 'edit') editStaffName(id);
+        else if (button.dataset.action === 'delete') deleteStaffName(id);
+    });
+
+    if (addUserBtn) {
+        addUserBtn.addEventListener('click', () => {
+            addUserModal?.classList.add('active');
+        });
+    }
+
+    if (newUserRole) {
+        newUserRole.addEventListener('change', (e) => {
+            const isStudent = e.target.value === 'student';
+            const isAdmin = e.target.value === 'admin';
+            const isProfessor = e.target.value === 'professor';
+
+            if (additionalFields) additionalFields.style.display = isStudent ? 'block' : 'none';
+            if (additionalAdminFields) additionalAdminFields.style.display = isAdmin ? 'block' : 'none';
+            const profFields = document.getElementById('additionalProfessorFields');
+            if (profFields) profFields.style.display = isProfessor ? 'block' : 'none';
+
+            const sId = document.getElementById('newUserStudentId');
+            const sMobile = document.getElementById('newUserMobile');
+            const sCourse = document.getElementById('newUserCourse');
+            const sYear = document.getElementById('newUserYearLevel');
+            const sSection = document.getElementById('newUserSection');
+            if (sId) sId.required = isStudent;
+            if (sMobile) sMobile.required = isStudent;
+            if (sCourse) sCourse.required = isStudent;
+            if (sYear) sYear.required = isStudent;
+            if (sSection) sSection.required = isStudent;
+            window.updateRequiredAsterisks?.();
+        });
+    }
+
+    const closeAddUser = () => {
+        addUserModal?.classList.remove('active');
+        addUserForm?.reset();
+        if (additionalFields) additionalFields.style.display = 'none';
+        if (additionalAdminFields) additionalAdminFields.style.display = 'none';
+        const profFields = document.getElementById('additionalProfessorFields');
+        if (profFields) profFields.style.display = 'none';
+
+        const avatarContainer = document.getElementById("addUserAvatarContainer");
+        if (avatarContainer) {
+            avatarContainer.innerHTML = `<img src="${window.DEFAULT_PROFILE_IMAGE}" alt="Default profile" style="width: 100%; height: 100%; object-fit: contain;">`;
+        }
+    };
+
+    if (closeAddUserModal) closeAddUserModal.addEventListener('click', closeAddUser);
+    if (cancelAddUser) cancelAddUser.addEventListener('click', closeAddUser);
+    if (addUserModal) {
+        addUserModal.addEventListener('click', (e) => {
+            if (e.target === addUserModal) closeAddUser();
+        });
+    }
+
+    const editRoleSelect = document.getElementById('editUserRole');
+    const editStudentContainer = document.getElementById('editStudentFieldsContainers');
+    const editAdminContainer = document.getElementById('editAdminFieldsContainers');
+    const editProfContainer = document.getElementById('editProfessorFieldsContainers');
+    if (editRoleSelect) {
+        editRoleSelect.addEventListener('change', (e) => {
+            const isStudent = e.target.value === 'student';
+            if (editStudentContainer) editStudentContainer.style.display = isStudent ? 'block' : 'none';
+            if (editAdminContainer) editAdminContainer.style.display = e.target.value === 'admin' ? 'block' : 'none';
+            if (editProfContainer) editProfContainer.style.display = e.target.value === 'professor' ? 'block' : 'none';
+
+            const sId = document.getElementById('editUserStudentId');
+            const sMobile = document.getElementById('editUserMobile');
+            const sCourse = document.getElementById('editUserCourse');
+            const sYear = document.getElementById('editUserYearLevel');
+            const sSection = document.getElementById('editUserSection');
+            if (sId) sId.required = isStudent;
+            if (sMobile) sMobile.required = isStudent;
+            if (sCourse) sCourse.required = isStudent;
+            if (sYear) sYear.required = isStudent;
+            if (sSection) sSection.required = isStudent;
+            window.updateRequiredAsterisks?.();
+        });
+    }
+
+    if (addUserForm) {
+        addUserForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await createNewUser();
+        });
+    }
+}
+
+async function createNewUser() {
+    const firstName = document.getElementById('newUserFirstName').value.trim();
+    const middleInitial = document.getElementById('newUserMiddleInitial').value.trim().replace(/\.+$/, '');
+    const lastName = document.getElementById('newUserLastName').value.trim();
+
+    // Auto-compose full name
+    const mInitial = middleInitial ? `${middleInitial}. ` : '';
+    const name = `${firstName} ${mInitial}${lastName}`;
+
+    const email = document.getElementById('newUserEmail').value.trim();
+    const password = document.getElementById('newUserPassword').value;
+    const role = document.getElementById('newUserRole').value;
+    const studentId = document.getElementById('newUserStudentId')?.value.trim();
+    const mobile = document.getElementById('newUserMobile')?.value.trim();
+    const gender = document.getElementById('newUserGender')?.value;
+    const course = document.getElementById('newUserCourse')?.value.trim();
+
+    const yearLevel = document.getElementById('newUserYearLevel')?.value;
+    const section = document.getElementById('newUserSection')?.value;
+    const yearSection = (yearLevel && section) ? `${yearLevel}-${section}` : '';
+    const photoInput = document.getElementById('newUserPhotoInput');
+    const adminId = document.getElementById('newUserAdminId')?.value.trim();
+
+    const submitBtn = document.querySelector('#addUserForm button[type="submit"]');
+    const originalBtnContent = submitBtn.innerHTML;
+
+    // --- Validation ---
+    if (!firstName || !lastName || !email || !password || !role) {
+        showToast('First name, last name, email, password, and role are required.', 'error');
+        return;
+    }
+
+    if (role === 'student') {
+        if (!studentId) { showToast('Student ID is required.', 'error'); return; }
+        if (studentId.length !== 10) { showToast('Student ID must be exactly 10 characters (e.g., 20250000-S).', 'error'); return; }
+        if (!mobile) { showToast('Mobile number is required.', 'error'); return; }
+        if (!/^[0-9]{11}$/.test(mobile)) { showToast('Mobile number must be exactly 11 digits.', 'error'); return; }
+        if (!gender) { showToast('Gender is required.', 'error'); return; }
+        if (!course) { showToast('Course is required.', 'error'); return; }
+        if (!yearLevel) { showToast('Year level is required.', 'error'); return; }
+        if (!section) { showToast('Section is required.', 'error'); return; }
+    } else if (role === 'professor') {
+        const facultyId = document.getElementById('newUserFacultyId')?.value.trim();
+        const profMobile = document.getElementById('newUserProfMobile')?.value.trim();
+        const department = document.getElementById('newUserDepartment')?.value.trim();
+        const profGender = document.getElementById('newUserProfGender')?.value;
+        
+        if (!facultyId) { showToast('Faculty ID is required.', 'error'); return; }
+        if (facultyId.length !== 10) { showToast('Faculty ID must be exactly 10 characters (e.g., 20250000-F).', 'error'); return; }
+        if (!profMobile) { showToast('Mobile number is required.', 'error'); return; }
+        if (!/^[0-9]{11}$/.test(profMobile)) { showToast('Mobile number must be exactly 11 digits.', 'error'); return; }
+        if (!profGender) { showToast('Gender is required.', 'error'); return; }
+        if (!department) { showToast('Department is required.', 'error'); return; }
+    } else if (role === 'admin') {
+        if (!adminId) { showToast('Admin ID is required.', 'error'); return; }
+    }
+
+    try {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span>Creating...</span>';
+
+        const userData = {
+            name,
+            email,
+            role,
+            password,
+            status: 'approved',
+            createdAt: db.FieldValue.serverTimestamp()
+        };
+
+        if (role === 'student') {
+            userData.studentId = studentId || "";
+            userData.mobile = mobile || "";
+            userData.gender = gender || "";
+            userData.course = course || "";
+            userData.yearSection = yearSection || "";
+            userData.firstName = firstName;
+            userData.middleInitial = middleInitial;
+            userData.lastName = lastName;
+            userData.yearLevel = yearLevel;
+            userData.section = section;
+        } else if (role === 'professor') {
+            userData.facultyId = document.getElementById('newUserFacultyId')?.value.trim() || "";
+            userData.department = document.getElementById('newUserDepartment')?.value.trim() || "";
+            userData.mobile = document.getElementById('newUserProfMobile')?.value.trim() || "";
+            userData.gender = document.getElementById('newUserProfGender')?.value || "";
+            userData.firstName = firstName;
+            userData.middleInitial = middleInitial;
+            userData.lastName = lastName;
+        } else if (role === 'admin') {
+            userData.adminId = adminId || "";
+            if (isHeadAdmin()) {
+                userData.isHeadAdmin = document.getElementById('newUserIsHeadAdmin')?.checked || false;
+            }
+            userData.firstName = firstName;
+            userData.middleInitial = middleInitial;
+            userData.lastName = lastName;
+        }
+
+        if (photoInput && (photoInput._croppedBase64 || (photoInput.files && photoInput.files[0]))) {
+            try {
+                if (photoInput._croppedBase64) {
+                    userData.photoURL = photoInput._croppedBase64;
+                } else {
+                    const base64Data = await resizeImage(photoInput.files[0], 200, 200);
+                    userData.photoURL = base64Data;
+                }
+            } catch (resizeErr) {
+                console.error("Resize error:", resizeErr);
+                throw new Error("Failed to process image. Please try a different photo.");
+            }
+        }
+
+        await window.auth.createAdminManagedUser(userData);
+
+        showToast(`${capitalize(role)} account created successfully!`, 'success');
+
+        document.getElementById('addUserModal').classList.remove('active');
+        document.getElementById('addUserForm').reset();
+        ['additionalStudentFields', 'additionalProfessorFields', 'additionalAdminFields'].forEach(id => {
+            const fields = document.getElementById(id);
+            if (fields) fields.style.display = 'none';
+        });
+
+        const avatarContainer = document.getElementById("addUserAvatarContainer");
+        if (avatarContainer) {
+            avatarContainer.innerHTML = `<img src="${window.DEFAULT_PROFILE_IMAGE}" alt="Default profile" style="width: 100%; height: 100%; object-fit: contain;">`;
+        }
+
+        loadUsers();
+        if (typeof loadPending === "function") loadPending();
+
+    } catch (error) {
+        console.error('Error creating user:', error);
+
+        let errorMessage = 'Failed to create user. ';
+        if (error.code === 'auth/email-already-in-use') errorMessage += 'This email is already registered.';
+        else if (error.code === 'auth/invalid-email') errorMessage += 'Invalid email address.';
+        else if (error.code === 'auth/weak-password') errorMessage += 'Password should be at least 6 characters.';
+        else errorMessage += error.message;
+
+        showToast(errorMessage, 'error');
+
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnContent;
+    }
+}
+
+
+async function loadUsers() {
+    const userTables = {
+        student: $('#studentsTable'),
+        professor: $('#professorsTable'),
+        admin: $('#adminsTable')
+    };
+    if (Object.values(userTables).every(table => table.length === 0)) return;
+
+    try {
+        const snapshot = await db.collection('users')
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        const allUsersData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const users = allUsersData.filter(user => user.status === 'approved' || user.status === 'suspended');
+
+        // 1. Fetch active borrowings to calculate CURRENT overdue items
+        const activeBorrowingsSnapshot = await db.collection('borrowings')
+            .where('status', 'in', ['borrowed', 'pending_extension', 'pending_return'])
+            .get();
+
+        // 2. Fetch historical borrowings to count PAST items that were returned late
+        const pastOverdueSnapshot = await db.collection('borrowings')
+            .where('wasOverdue', '==', true)
+            .get();
+        
+        const overdueMap = {};
+        const historicalOverdueMap = {};
+        // Add current active overdues to the map
+        activeBorrowingsSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            const due = window.getBorrowingDueAt(data.borrowedAt, data.expectedReturnTime);
+            if (data.userId && due && new Date() > due) {
+                overdueMap[data.userId] = (overdueMap[data.userId] || 0) + 1;
+            }
+        });
+
+        // Add past returned overdues to the map
+        pastOverdueSnapshot.docs.forEach(doc => {
+            const data = doc.data();
+            if (data.userId && window.isOverdueStrikeActive(data)) {
+                overdueMap[data.userId] = (overdueMap[data.userId] || 0) + 1;
+                historicalOverdueMap[data.userId] = (historicalOverdueMap[data.userId] || 0) + 1;
+            }
+        });
+
+        const rowsByRole = { student: [], professor: [], admin: [] };
+        users.forEach(user => {
+            if (!rowsByRole[user.role]) return;
+            const avatarHTML = `<img src="${user.photoURL || window.DEFAULT_PROFILE_IMAGE}" alt="" class="user-table-avatar">`;
+
+            const isUserHeadAdmin = user.role === 'admin' && (user.isHeadAdmin === true || user.isHeadAdmin === 'true' || user.adminType === 'head_admin');
+            const roleBadge = isUserHeadAdmin
+                ? `<span class="badge badge-head-admin">Head Admin</span>`
+                : `<span class="badge badge-category ${user.role}">${capitalize(user.role)}</span>`;
+            const isSuspended = user.status === 'suspended';
+            const statusBadge = user.role !== 'admin' && isSuspended
+                ? `<span class="badge badge-status" style="background: rgba(239, 68, 68, 0.1); color: var(--danger); margin-left: 5px;">SUSPENDED</span>`
+                : '';
+
+            const overdueCount = overdueMap[user.id] || 0;
+            const historicalOverdueCount = historicalOverdueMap[user.id] || 0;
+            const overdueResetButton = historicalOverdueCount > 0 && currentAdminData?.role === 'admin'
+                ? `<button type="button" class="user-reset-overdue-btn" data-user-id="${escapeAdminHtml(user.id)}" data-user-name="${escapeAdminHtml(user.name)}">Reset overdue</button>`
+                : '';
+            const overdueBadge = overdueCount > 0
+                ? `<br><span class="badge user-overdue-badge">${overdueCount} Overdue Item${overdueCount > 1 ? 's' : ''}</span>${overdueResetButton ? `<br>${overdueResetButton}` : ''}`
+                : '';
+
+            const yearSectionParts = String(user.yearSection || '').match(/^(.+?)[-\s]+([^-]+)$/);
+            const course = user.role === 'student' ? String(user.course || '') : '';
+            const yearLevel = user.role === 'student' ? String(user.yearLevel || yearSectionParts?.[1] || '') : '';
+            const section = user.role === 'student' ? String(user.section || yearSectionParts?.[2] || '') : '';
+            const yearLevelNumber = Number.parseInt(yearLevel, 10);
+            const yearLevelLabel = ({
+                1: '1st Year',
+                2: '2nd Year',
+                3: '3rd Year',
+                4: '4th Year'
+            })[yearLevelNumber] || yearLevel;
+            const yearLevelSort = yearLevelNumber || 999;
+            const roleDetails = user.role === 'student'
+                ? [
+                    `<td data-order="${escapeAdminHtml(course.toLocaleLowerCase())}">${escapeAdminHtml(course || 'N/A')}</td>`,
+                    `<td data-order="${yearLevelSort}">${escapeAdminHtml(yearLevelLabel || 'N/A')}</td>`,
+                    `<td data-order="${escapeAdminHtml(section.toLocaleLowerCase())}">${escapeAdminHtml(section || 'N/A')}</td>`,
+                    `<td class="user-role-cell">${escapeAdminHtml(user.studentId || 'N/A')}${overdueBadge}</td>`,
+                    `<td>${escapeAdminHtml(user.mobile || 'N/A')}</td>`
+                ]
+                : user.role === 'professor'
+                    ? [
+                        `<td>${escapeAdminHtml(user.department || 'N/A')}</td>`,
+                        `<td>${escapeAdminHtml(user.mobile || 'N/A')}</td>`,
+                        `<td class="user-role-cell">${escapeAdminHtml(user.facultyId || 'N/A')}${overdueBadge}</td>`
+                    ]
+                    : [
+                        `<td>${escapeAdminHtml(user.adminId || 'N/A')}</td>`,
+                        `<td>${roleBadge}</td>`
+                    ];
+
+            let actionHtml = '';
+            if (user.id !== currentAdmin.uid) {
+                actionHtml = `
+                        <div class="user-table-actions">
+                            <button type="button" class="user-table-icon-btn" onclick="openEditUser('${user.id}','${user.name}','${user.email}','${user.role}','${user.studentId || ''}','${user.mobile || ''}','${user.gender || ''}','${user.course || ''}','${user.yearSection || ''}', '${user.photoURL || ''}', '${user.firstName || ''}', '${user.middleInitial || ''}', '${user.lastName || ''}', '${user.yearLevel || ''}', '${user.section || ''}', '${user.adminId || ''}', '${user.facultyId || ''}', '${user.department || ''}', ${isUserHeadAdmin})" title="Edit user details" aria-label="Edit user details">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
+                                <span class="sr-only">Edit user</span>
+                            </button>
+
+                            ${isSuspended ? `
+                                <button type="button" class="user-table-icon-btn user-table-icon-btn-success" onclick="unsuspendUser('${user.id}', '${user.name.replace(/'/g, "\\'")}')" title="Unsuspend account" aria-label="Unsuspend account">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+                                    <span class="sr-only">Unsuspend</span>
+                                </button>
+                            ` : `
+                                <button type="button" class="user-table-icon-btn user-table-icon-btn-muted" onclick="suspendUser('${user.id}', '${user.name.replace(/'/g, "\\'")}')" title="Suspend account" aria-label="Suspend account">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>
+                                    <span class="sr-only">Suspend</span>
+                                </button>
+                            `}
+
+                            <button type="button" class="user-table-icon-btn user-table-icon-btn-danger" onclick="deleteUser('${user.id}', '${user.email}')" title="Delete user" aria-label="Delete user">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg>
+                                <span class="sr-only">Delete user</span>
+                            </button>
+
+                            <button type="button" class="user-table-icon-btn" onclick="openAdminSetPassword('${user.id}','${user.name}','${user.email}','${(user.photoURL || '').replace(/'/g, "&#39;")}')" title="Reset/change this user's password" aria-label="Reset password">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m10.85 12.15 8.65-8.65 2 2-2 2 2 2-3 3-2-2-2 2"/></svg>
+                                <span class="sr-only">Reset password</span>
+                            </button>
+                        </div>
+                `;
+            } else {
+                actionHtml = '<span style="font-size: 0.75rem; color: var(--text-tertiary);">(You)</span>';
+            }
+
+                rowsByRole[user.role].push(`
+                    <tr class="${isSuspended ? 'user-row-suspended' : ''}">
+                        <td class="user-table-user-cell">
+                            <div class="user-table-user">
+                                ${avatarHTML}
+                                <div class="user-table-user-details">
+                                    <strong>${escapeAdminHtml(user.name || 'Unnamed user')}</strong>${statusBadge}
+                                </div>
+                            </div>
+                        </td>
+                        <td>${escapeAdminHtml(user.email || 'N/A')}</td>
+                        ${roleDetails.join('')}
+                        <td class="user-actions-cell" style="vertical-align: middle;">${actionHtml}</td>
+                    </tr>
+                `);
+        });
+
+        Object.entries(userTables).forEach(([role, table]) => {
+            if (table.length === 0) return;
+            const selector = `#${table.attr('id')}`;
+            if ($.fn.DataTable.isDataTable(selector)) {
+                table.DataTable().clear().destroy();
+            }
+            table.find('tbody').html(rowsByRole[role].join(''));
+            const actionColumn = table.find('thead th').length - 1;
+            table.DataTable({
+                responsive: false,
+                pageLength: 10,
+                lengthMenu: [10, 8, 5],
+                autoWidth: false,
+                pagingType: "simple_numbers",
+                columnDefs: [
+                    { targets: actionColumn, orderable: false, searchable: false }
+                ],
+                language: {
+                    search: "",
+                    searchPlaceholder: "Search...",
+                    lengthMenu: "Show _MENU_ entries",
+                    emptyTable: `No ${role === 'admin' ? 'administrators' : `${role}s`} found`,
+                    zeroRecords: "No matching users found"
+                }
+            });
+        });
+
+        $('#usersView').off('click', '.user-reset-overdue-btn').on('click', '.user-reset-overdue-btn', function () {
+            resetUserOverdueHistory(this.dataset.userId, this.dataset.userName);
+        });
+    } catch (error) {
+        console.error('Error loading users:', error);
+        showToast('Failed to load users', 'error');
+    }
+}
+
+async function resetUserOverdueHistory(userId, userName) {
+    if (!currentAdmin || currentAdminData?.role !== 'admin') {
+        showToast('Only administrators can reset overdue history.', 'error');
+        return;
+    }
+
+    if (!await showConfirm({
+        title: 'Reset Overdue Strikes',
+        message: `Reset ${userName}'s active overdue strikes?\n\nCurrently unreturned overdue items will remain counted until returned.`,
+        confirmText: 'Reset History',
+        type: 'primary'
+    })) return;
+
+    try {
+        const overdueSnapshot = await db.collection('borrowings')
+            .where('userId', '==', userId)
+            .where('wasOverdue', '==', true)
+            .get();
+        const returnedOverdueDocs = overdueSnapshot.docs.filter(doc => doc.data().status === 'returned');
+
+        if (returnedOverdueDocs.length > 0) {
+            const batch = db.batch();
+            returnedOverdueDocs.forEach(doc => {
+                batch.update(doc.ref, {
+                    wasOverdue: false
+                });
+            });
+            await batch.commit();
+        }
+
+        showToast(`Historical overdue strikes reset for ${userName}.`, 'success');
+        await loadUsers();
+    } catch (error) {
+        console.error('Error resetting overdue history:', error);
+        showToast('Failed to reset overdue history.', 'error');
+    }
+}
+
+function escapeAdminHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    })[char]);
+}
+
+function openStaffNameModal(staff = null) {
+    const form = document.getElementById('staffNameForm');
+    if (!form) return;
+    form.reset();
+    document.getElementById('staffNameId').value = staff ? String(staff.id) : '';
+    document.getElementById('staffNameInput').value = staff?.name || '';
+    document.getElementById('staffNameModalTitle').textContent = staff ? 'Edit Staff Name' : 'Add Staff Name';
+    document.getElementById('saveStaffNameBtn').textContent = staff ? 'Save Changes' : 'Add Staff';
+    document.getElementById('staffNameModal').classList.add('active');
+    document.getElementById('staffNameInput').focus();
+}
+
+function closeStaffNameModal() {
+    document.getElementById('staffNameModal')?.classList.remove('active');
+}
+
+async function editStaffName(id) {
+    try {
+        const doc = await db.collection('admin_staff_names').doc(id).get();
+        if (!doc.exists) {
+            showToast('Staff name not found. Refresh the list and try again.', 'error');
+            await loadAdminStaffNames();
+            return;
+        }
+        openStaffNameModal({ id: doc.id, ...doc.data() });
+    } catch (error) {
+        console.error('Could not load staff name for editing:', error);
+        showToast('Failed to open staff name for editing.', 'error');
+    }
+}
+
+async function saveStaffName(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = document.getElementById('saveStaffNameBtn');
+    const id = document.getElementById('staffNameId').value;
+    const name = document.getElementById('staffNameInput').value.trim().replace(/\s+/g, ' ');
+    if (!name) {
+        showToast('Enter a staff name.', 'error');
+        return;
+    }
+
+    submitButton.disabled = true;
+    submitButton.textContent = 'Saving...';
+    try {
+        const snapshot = await db.collection('admin_staff_names').get();
+        const duplicate = snapshot.docs.some(doc =>
+            String(doc.id) !== String(id) &&
+            String(doc.data().name || '').trim().toLocaleLowerCase() === name.toLocaleLowerCase()
+        );
+        if (duplicate) {
+            showToast('This staff name is already on the list.', 'error');
+            return;
+        }
+
+        if (id) {
+            await db.collection('admin_staff_names').doc(id).update({ name });
+            showToast('Staff name updated.', 'success');
+        } else {
+            await db.collection('admin_staff_names').add({
+                name,
+                addedBy: currentAdmin?.uid || ''
+            });
+            showToast('Staff name added.', 'success');
+        }
+        closeStaffNameModal();
+        form.reset();
+        document.getElementById('staffNameId').value = '';
+        await loadAdminStaffNames();
+    } catch (error) {
+        console.error('Could not save staff name:', error);
+        showToast('Failed to save staff name. Please try again.', 'error');
+    } finally {
+        submitButton.disabled = false;
+        submitButton.textContent = document.getElementById('staffNameId').value ? 'Save Changes' : 'Add Staff';
+    }
+}
+
+async function deleteStaffName(id) {
+    if (!await showConfirm({
+        title: 'Remove Staff Name',
+        message: 'Remove this name from the approval dropdown list?',
+        confirmText: 'Remove',
+        type: 'danger'
+    })) return;
+
+    try {
+        await db.collection('admin_staff_names').doc(id).delete();
+        showToast('Staff name removed.', 'success');
+        await loadAdminStaffNames();
+    } catch (error) {
+        console.error('Could not remove staff name:', error);
+        showToast('Failed to remove staff name. Please try again.', 'error');
+    }
+}
+
+async function loadAdminStaffNames() {
+    const table = $('#adminStaffNamesTable');
+    if (!table.length) return;
+
+    try {
+        const snapshot = await db.collection('admin_staff_names').orderBy('name').get();
+        if ($.fn.DataTable.isDataTable('#adminStaffNamesTable')) {
+            table.DataTable().clear().destroy();
+        }
+
+        const tbody = table.find('tbody');
+        tbody.html(snapshot.docs.map(doc => {
+            const staff = doc.data();
+            const id = String(doc.id);
+            return `
+                <tr>
+                    <td>${escapeAdminHtml(staff.name)}</td>
+                    <td>
+                        <div class="user-table-actions">
+                            <button type="button" class="user-table-icon-btn" data-action="edit" data-id="${escapeAdminHtml(id)}" title="Edit staff name" aria-label="Edit staff name">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
+                                <span class="sr-only">Edit staff name</span>
+                            </button>
+                            <button type="button" class="user-table-icon-btn user-table-icon-btn-danger" data-action="delete" data-id="${escapeAdminHtml(id)}" title="Remove staff name" aria-label="Remove staff name">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/></svg>
+                                <span class="sr-only">Remove staff name</span>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join(''));
+
+        table.DataTable({
+            responsive: false,
+            pageLength: 10,
+            lengthMenu: [10, 8, 5],
+            autoWidth: false,
+            pagingType: 'simple_numbers',
+            language: {
+                search: '',
+                searchPlaceholder: 'Search staff...',
+                lengthMenu: 'Show _MENU_ entries',
+                emptyTable: 'No staff names added yet',
+                zeroRecords: 'No matching staff names found'
+            },
+            columnDefs: [{ orderable: false, targets: 1 }]
+        });
+    } catch (error) {
+        console.error('Error loading approval staff names:', error);
+        showToast('Failed to load approval staff names.', 'error');
+    }
+}
+
+async function deleteUser(userId, userEmail) {
+    if (!await showConfirm({
+        title: 'Delete User',
+        message: `Are you sure you want to delete the user: ${userEmail}?`,
+        confirmText: 'Delete',
+        type: 'danger'
+    })) {
+        return;
+    }
+
+    try {
+        await db.collection('users').doc(userId).delete();
+        showToast('User account removed.', 'success');
+        loadUsers();
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        showToast('Failed to delete user. Please try again.', 'error');
+    }
+}
+
+async function suspendUser(userId, userName) {
+    const reason = await showConfirm({
+        title: 'Suspend Account',
+        message: `Suspend ${userName}'s account? They will be logged out and blocked from logging in. The reason will be emailed to the account holder.`,
+        inputLabel: 'Suspension reason',
+        inputPlaceholder: 'Enter the reason for suspension',
+        confirmText: 'Suspend',
+        type: 'danger'
+    });
+    if (!reason) return;
+
+    try {
+        const result = await auth.suspendAccount(userId, reason);
+        if (result.emailSent) {
+            showToast(`Account for ${userName} has been suspended and the reason was emailed.`, 'success');
+        } else {
+            showToast(`Account suspended, but the email could not be sent: ${result.emailError || 'Email service unavailable.'}`, 'error');
+        }
+        loadUsers();
+    } catch (error) {
+        console.error('Error suspending user:', error);
+        showToast(`Failed to suspend account: ${error.message || 'Please try again.'}`, 'error');
+    }
+}
+
+async function unsuspendUser(userId, userName) {
+    if (!await showConfirm({
+        title: 'Unsuspend & Reset Account',
+        message: `Restore access for ${userName}?\n\nThis will also forgive their past overdue strikes, resetting their historical count to 0.`,
+        confirmText: 'Restore & Reset',
+        type: 'primary'
+    })) return;
+
+    try {
+        // Clear returned overdue strikes before restoring access.
+        const pastOverdueSnapshot = await db.collection('borrowings')
+            .where('userId', '==', userId)
+            .where('wasOverdue', '==', true)
+            .get();
+        const returnedOverdueDocs = pastOverdueSnapshot.docs.filter(doc => doc.data().status === 'returned');
+
+        // Clear returned overdue strike flags before restoring access.
+        if (returnedOverdueDocs.length > 0) {
+            const batch = db.batch();
+            returnedOverdueDocs.forEach(doc => {
+                batch.update(doc.ref, { wasOverdue: false });
+            });
+            await batch.commit();
+        }
+
+        await db.collection('users').doc(userId).update({
+            status: 'approved',
+            suspendedReason: db.FieldValue.delete()
+        });
+
+        showToast(`Account for ${userName} restored and overdue count reset.`, 'success');
+        
+        // Refresh the tables and check system
+        loadUsers();
+        if (typeof checkAllUsersForAutoSuspend === 'function') {
+            checkAllUsersForAutoSuspend();
+        }
+        
+    } catch (error) {
+        console.error('Error unsuspending user:', error);
+        showToast(`Failed to restore account: ${error.message || 'Please try again.'}`, 'error');
+    }
+}
+
+function initializeLogout() {
+    const logoutBtn = document.getElementById('logoutBtn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', async () => {
+            if (!await showConfirm({
+                title: 'Logout',
+                message: 'Are you sure you want to logout of your account?',
+                confirmText: 'Logout',
+                type: 'danger'
+            })) return;
+
+            try {
+                await auth.signOut();
+                showToast('Logged out successfully', 'success');
+                setTimeout(() => {
+                    window.location.href = 'index.html';
+                }, 1000);
+            } catch (error) {
+                console.error('Logout error:', error);
+                showToast('Failed to logout. Please try again.', 'error');
+            }
+        });
+    }
+}
+
+let editEquipmentPhotoState = {
+    action: 'keep',
+    currentPhoto: null
+};
+
+function previewEditEquipmentPhoto(input) {
+    if (input.files && input.files[0]) {
+        const file = input.files[0];
+        if (file.size > 5 * 1024 * 1024) {
+            showToast("Photo is too large (max 5MB)", "error");
+            input.value = "";
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = document.getElementById("editEquipmentPhotoImg");
+            const placeholder = document.getElementById("editEquipmentPhotoPlaceholder");
+            const removeBtn = document.getElementById("removeEditEquipmentPhotoBtn");
+            if (img) {
+                img.src = e.target.result;
+                img.style.display = 'block';
+            }
+            if (placeholder) placeholder.style.display = 'none';
+            if (removeBtn) removeBtn.style.display = 'inline-flex';
+            editEquipmentPhotoState.action = 'change';
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+function clearEditEquipmentPhoto() {
+    const input = document.getElementById("editEquipmentPhotoInput");
+    if (input) input.value = "";
+    const img = document.getElementById("editEquipmentPhotoImg");
+    const placeholder = document.getElementById("editEquipmentPhotoPlaceholder");
+    const removeBtn = document.getElementById("removeEditEquipmentPhotoBtn");
+    if (img) {
+        img.src = '';
+        img.style.display = 'none';
+    }
+    if (placeholder) placeholder.style.display = 'block';
+    if (removeBtn) removeBtn.style.display = 'none';
+    editEquipmentPhotoState.action = 'remove';
+}
+
+function setEditEquipmentPhotoDisplay(photoURL) {
+    const img = document.getElementById("editEquipmentPhotoImg");
+    const placeholder = document.getElementById("editEquipmentPhotoPlaceholder");
+    const removeBtn = document.getElementById("removeEditEquipmentPhotoBtn");
+    const input = document.getElementById("editEquipmentPhotoInput");
+    if (input) input.value = "";
+
+    if (photoURL && photoURL !== 'null' && photoURL !== 'undefined' && photoURL !== '') {
+        if (img) {
+            img.src = photoURL;
+            img.style.display = 'block';
+        }
+        if (placeholder) placeholder.style.display = 'none';
+        if (removeBtn) removeBtn.style.display = 'inline-flex';
+    } else {
+        if (img) {
+            img.src = '';
+            img.style.display = 'none';
+        }
+        if (placeholder) placeholder.style.display = 'block';
+        if (removeBtn) removeBtn.style.display = 'none';
+    }
+}
+
+function openEditEquipment(id, eid, name, cat, desc, status, photoURL) {
+    let item = null;
+    if (typeof currentEquipmentList !== 'undefined' && Array.isArray(currentEquipmentList)) {
+        item = currentEquipmentList.find(e => String(e.id) === String(id));
+    }
+
+    const finalEid = (item && item.equipmentId !== undefined) ? item.equipmentId : (eid || '');
+    const finalName = (item && item.name !== undefined) ? item.name : (name || '');
+    const finalCat = (item && item.category !== undefined) ? item.category : (cat || '');
+    const finalDesc = (item && item.description !== undefined) ? item.description : (desc || '');
+    const finalStatus = (item && item.status !== undefined) ? item.status : (status || 'available');
+    const finalPhoto = (item && item.photoURL !== undefined) ? item.photoURL : (photoURL || null);
+
+    document.getElementById("editDocId").value = id;
+    document.getElementById("editEquipmentId").value = finalEid;
+    document.getElementById("editEquipmentName").value = finalName;
+    document.getElementById("editEquipmentCategory").value = finalCat;
+    document.getElementById("editEquipmentDescription").value = finalDesc;
+    document.getElementById("editEquipmentStatus").value = finalStatus;
+
+    editEquipmentPhotoState = {
+        action: 'keep',
+        currentPhoto: finalPhoto
+    };
+    setEditEquipmentPhotoDisplay(finalPhoto);
+
+    document.getElementById("editEquipmentModal").classList.add("active");
+}
+
+function closeEditEquipment() {
+    document.getElementById("editEquipmentModal").classList.remove("active");
+}
+
+const editEquipmentForm = document.getElementById("editEquipmentForm");
+if (editEquipmentForm) {
+    editEquipmentForm.addEventListener("submit", async e => {
+        e.preventDefault();
+
+        const submitBtn = editEquipmentForm.querySelector('button[type="submit"]');
+        const originalContent = submitBtn ? submitBtn.innerHTML : 'Save Changes';
+
+        const id = document.getElementById("editDocId").value;
+        const newStatus = document.getElementById("editEquipmentStatus").value;
+
+        const updateData = {
+            equipmentId: document.getElementById("editEquipmentId").value.trim(),
+            name: document.getElementById("editEquipmentName").value.trim(),
+            category: document.getElementById("editEquipmentCategory").value,
+            description: document.getElementById("editEquipmentDescription").value,
+            status: newStatus
+        };
+
+        // Note: Never include borrowedBy or borrowedAt here! They belong to the borrowings table.
+
+        if (editEquipmentPhotoState.action === 'change') {
+            const photoInput = document.getElementById("editEquipmentPhotoInput");
+            if (photoInput && photoInput.files && photoInput.files[0]) {
+                try {
+                    const base64 = await readFileAsBase64(photoInput.files[0]);
+                    updateData.photoURL = base64;
+                } catch (photoErr) {
+                    console.error('Error reading photo:', photoErr);
+                    showToast('Failed to process photo, saving without new photo', 'warning');
+                }
+            }
+        } else if (editEquipmentPhotoState.action === 'remove') {
+            updateData.photoURL = null;
+        }
+
+        try {
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span>Saving...</span>';
+            }
+
+            await db.collection("equipment").doc(id).update(updateData);
+            showToast("Equipment updated successfully", "success");
+            closeEditEquipment();
+            loadAllEquipment();
+            loadDashboardData();
+        } catch (error) {
+            console.error("Error updating equipment:", error);
+            showToast(`Failed to update equipment: ${error.message}`, "error");
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalContent;
+            }
+        }
+    });
+}
+
+function setSelectValueWithLegacyOption(select, value) {
+    if (!select || !value) return;
+    if (!Array.from(select.options).some(option => option.value === value)) {
+        select.add(new Option(value, value));
+    }
+    select.value = value;
+}
+
+function openEditUser(id, name, email, role, studentId, mobile, gender, course, yearSection, photoURL, firstName, middleInitial, lastName, yearLevel, section, adminId, facultyId, department, isHeadAdmin = false) {
+    document.getElementById("editUserId").value = id;
+    document.getElementById("editUserEmail").value = email;
+    document.getElementById("editUserRole").value = role;
+    document.getElementById("editUserStudentId").value = studentId || "";
+    document.getElementById("editUserMobile").value = mobile || "";
+    document.getElementById("editUserGender").value = gender || "";
+    setSelectValueWithLegacyOption(document.getElementById("editUserCourse"), course || "");
+    document.getElementById("editUserAdminId").value = adminId || "";
+
+    const headCheckbox = document.getElementById("editUserIsHeadAdmin");
+    if (headCheckbox) {
+        headCheckbox.checked = !!(isHeadAdmin === true || isHeadAdmin === 'true');
+    }
+
+    // Professor fields
+    const facIdEl = document.getElementById("editUserFacultyId");
+    const deptEl = document.getElementById("editUserDepartment");
+    const profMobileEl = document.getElementById("editUserProfMobile");
+    const profGenderEl = document.getElementById("editUserProfGender");
+    if (facIdEl) facIdEl.value = facultyId || "";
+    setSelectValueWithLegacyOption(deptEl, department || "");
+    if (profMobileEl) profMobileEl.value = (role === 'professor' ? mobile : '') || "";
+    if (profGenderEl) profGenderEl.value = (role === 'professor' ? gender : '') || "";
+
+    // Older accounts may only have a full name or combined year/section value.
+    const nameParts = (name || "").trim().split(/\s+/).filter(Boolean);
+    const fallbackMiddle = nameParts.length > 2 ? `${nameParts[1].charAt(0)}.` : "";
+    document.getElementById("editUserFirstName").value = firstName || nameParts[0] || "";
+    document.getElementById("editUserMiddleInitial").value = middleInitial || fallbackMiddle;
+    document.getElementById("editUserLastName").value = lastName || (nameParts.length > 1 ? nameParts[nameParts.length - 1] : "");
+
+    const combinedYearSection = (yearSection || "").match(/^(.+?)[-\s]+([^-]+)$/);
+    const storedYearLevel = yearLevel || (combinedYearSection ? combinedYearSection[1] : "");
+    const normalizedYearLevel = ({
+        "1st Year": "1",
+        "2nd Year": "2",
+        "3rd Year": "3",
+        "4th Year": "4"
+    })[storedYearLevel] || storedYearLevel;
+    document.getElementById("editUserYearLevel").value = normalizedYearLevel;
+    document.getElementById("editUserSection").value = section || (combinedYearSection ? combinedYearSection[2] : "");
+
+    // Reset file input
+    const photoInput = document.getElementById("editUserPhotoInput");
+    if (photoInput) photoInput.value = "";
+
+    // Set avatar preview
+    const avatarContainer = document.getElementById("editUserAvatarContainer");
+    if (avatarContainer) {
+        const avatarURL = photoURL && photoURL !== 'undefined' ? photoURL : window.DEFAULT_PROFILE_IMAGE;
+        avatarContainer.innerHTML = `<img src="${avatarURL}" alt="${name}" style="width: 100%; height: 100%; object-fit: contain;">`;
+    }
+
+    const isStudent = role === 'student';
+    const studentContainer = document.getElementById("editStudentFieldsContainers");
+    const adminContainer = document.getElementById("editAdminFieldsContainers");
+    const profContainer = document.getElementById("editProfessorFieldsContainers");
+    if (studentContainer) {
+        studentContainer.style.display = isStudent ? 'block' : 'none';
+    }
+    if (adminContainer) {
+        adminContainer.style.display = role === 'admin' ? 'block' : 'none';
+    }
+    if (profContainer) {
+        profContainer.style.display = role === 'professor' ? 'block' : 'none';
+    }
+
+    const sId = document.getElementById("editUserStudentId");
+    const sMobile = document.getElementById("editUserMobile");
+    const sCourse = document.getElementById("editUserCourse");
+    const sYear = document.getElementById("editUserYearLevel");
+    const sSection = document.getElementById("editUserSection");
+    if (sId) sId.required = isStudent;
+    if (sMobile) sMobile.required = isStudent;
+    if (sCourse) sCourse.required = isStudent;
+    if (sYear) sYear.required = isStudent;
+    if (sSection) sSection.required = isStudent;
+    window.updateRequiredAsterisks?.();
+
+    document.getElementById("editUserModal").classList.add("active");
+}
+
+function previewUserPhoto(input) {
+    if (input.files && input.files[0]) {
+        const file = input.files[0];
+        if (file.size > 2 * 1024 * 1024) {
+            showToast("Image too large. Max 2MB allowed.", "error");
+            input.value = "";
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            const avatarContainer = document.getElementById("editUserAvatarContainer");
+            if (avatarContainer) {
+                avatarContainer.innerHTML = `<img src="${e.target.result}" alt="Preview" style="width: 100%; height: 100%; object-fit: contain;">`;
+            }
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+function closeEditUser() {
+    document.getElementById("editUserModal").classList.remove("active");
+}
+
+const editUserForm = document.getElementById("editUserForm");
+if (editUserForm) {
+    editUserForm.addEventListener("submit", async e => {
+        e.preventDefault();
+        console.log("editUserForm submitted");
+
+        const id = document.getElementById("editUserId").value;
+        const role = document.getElementById("editUserRole").value;
+        const photoInput = document.getElementById("editUserPhotoInput");
+
+        const submitBtn = e.target.querySelector('button[type="submit"]') || e.target.querySelector('button.btn-primary');
+        if (!submitBtn) {
+            console.error("Submit button not found in form!");
+            return;
+        }
+        const originalContent = submitBtn.innerHTML;
+
+        try {
+            console.log(">>> [STEP 1] Starting editUserForm submit...");
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = "<span>Saving...</span>";
+
+            // --- Consolidation of values for validation ---
+            const firstName = document.getElementById("editUserFirstName").value.trim();
+            const lastName = document.getElementById("editUserLastName").value.trim();
+            const email = document.getElementById("editUserEmail").value.trim();
+            const middleInitial = document.getElementById("editUserMiddleInitial").value.trim().replace(/\.+$/, '');
+
+            let idToCheck = "";
+            if (role === 'student') idToCheck = document.getElementById("editUserStudentId").value.trim();
+            else if (role === 'professor') idToCheck = document.getElementById("editUserFacultyId")?.value.trim() || "";
+            else if (role === 'admin') idToCheck = document.getElementById("editUserAdminId")?.value.trim() || "";
+
+            // --- Validation Block ---
+            if (!firstName || !lastName || !email) {
+                showToast("Basic information (Names, Email) is required.", "error");
+                submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return;
+            }
+
+            if (role === 'student') {
+                const sMobile = document.getElementById("editUserMobile").value.trim();
+                const sGender = document.getElementById("editUserGender").value;
+                const sCourse = document.getElementById("editUserCourse").value.trim();
+                const sYear = document.getElementById("editUserYearLevel").value;
+                const sSection = document.getElementById("editUserSection").value;
+
+                if (!idToCheck) { showToast("Student ID is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (idToCheck.length !== 10) { showToast("Student ID must be exactly 10 characters.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!sMobile) { showToast("Mobile number is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!/^[0-9]{11}$/.test(sMobile)) { showToast("Mobile number must be exactly 11 digits.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!sGender) { showToast("Gender is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!sCourse) { showToast("Course is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!sYear) { showToast("Year Level is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!sSection) { showToast("Section is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+            } else if (role === 'professor') {
+                const pMobile = document.getElementById("editUserProfMobile")?.value.trim();
+                const pGender = document.getElementById("editUserProfGender")?.value;
+                const pDept = document.getElementById("editUserDepartment")?.value.trim();
+
+                if (!idToCheck) { showToast("Faculty ID is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (idToCheck.length !== 10) { showToast("Faculty ID must be exactly 10 characters.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!pMobile) { showToast("Mobile number is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!/^[0-9]{11}$/.test(pMobile)) { showToast("Mobile number must be exactly 11 digits.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!pGender) { showToast("Gender is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+                if (!pDept) { showToast("Department is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+            } else if (role === 'admin') {
+                if (!idToCheck) { showToast("Admin ID is required.", "error"); submitBtn.disabled = false; submitBtn.innerHTML = originalContent; return; }
+            }
+
+            // --- ID Uniqueness Check ---
+            if (idToCheck) {
+                const [studentCheck, facultyCheck, adminCheck] = await Promise.all([
+                    db.collection('users').where('studentId', '==', idToCheck).get(),
+                    db.collection('users').where('facultyId', '==', idToCheck).get(),
+                    db.collection('users').where('adminId', '==', idToCheck).get()
+                ]);
+
+                const isDuplicate =
+                    studentCheck.docs.some(doc => String(doc.id) !== String(id)) ||
+                    facultyCheck.docs.some(doc => String(doc.id) !== String(id)) ||
+                    adminCheck.docs.some(doc => String(doc.id) !== String(id));
+
+                if (isDuplicate) {
+                    showToast('This ID is already registered to another user.', 'error');
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = originalContent;
+                    return;
+                }
+            }
+
+            const mInitial = middleInitial ? `${middleInitial}. ` : '';
+            const name = `${firstName} ${mInitial}${lastName}`;
+
+            const updateData = {
+                name: name,
+                email: email,
+                role: role,
+                firstName: firstName,
+                middleInitial: middleInitial,
+                lastName: lastName
+            };
+
+            if (role === 'student') {
+                const yearLevel = document.getElementById("editUserYearLevel").value;
+                const section = document.getElementById("editUserSection").value;
+
+                updateData.studentId = idToCheck;
+                updateData.mobile = document.getElementById("editUserMobile").value.trim();
+                updateData.gender = document.getElementById("editUserGender").value;
+                updateData.course = document.getElementById("editUserCourse").value.trim();
+                updateData.yearLevel = yearLevel;
+                updateData.section = section;
+                updateData.yearSection = (yearLevel && section) ? `${yearLevel}-${section}` : '';
+            } else if (role === 'professor') {
+                updateData.facultyId = document.getElementById("editUserFacultyId")?.value.trim() || '';
+                updateData.department = document.getElementById("editUserDepartment")?.value.trim() || '';
+                updateData.mobile = document.getElementById("editUserProfMobile")?.value.trim() || '';
+                updateData.gender = document.getElementById("editUserProfGender")?.value || '';
+            } else if (role === 'admin') {
+                updateData.adminId = document.getElementById("editUserAdminId").value.trim();
+                const headCheckbox = document.getElementById("editUserIsHeadAdmin");
+                if (headCheckbox && isHeadAdmin()) {
+                    updateData.isHeadAdmin = headCheckbox.checked;
+                }
+            }
+
+            // Handle photo upload if a new file or cropped photo is selected
+            if (photoInput && (photoInput._croppedBase64 || (photoInput.files && photoInput.files[0]))) {
+                console.log(">>> [STEP 2] Photo selected, saving photoURL...");
+                try {
+                    if (photoInput._croppedBase64) {
+                        updateData.photoURL = photoInput._croppedBase64;
+                    } else {
+                        const file = photoInput.files[0];
+                        const base64Data = await resizeImage(file, 200, 200);
+                        updateData.photoURL = base64Data;
+                    }
+                    console.log(">>> [STEP 5] Photo ready for save");
+                } catch (resizeErr) {
+                    console.error("Resize error:", resizeErr);
+                    throw new Error("Failed to process image. Please try a different photo.");
+                }
+            }
+
+            console.log(">>> [STEP 8] Updating user record...");
+            const dbPromise = db.collection("users").doc(id).update(updateData);
+            const dbTimeout = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error("Database update timed out (15s)")), 15000)
+            );
+
+            await Promise.race([dbPromise, dbTimeout]);
+            console.log(">>> [STEP 9] User record updated successfully.");
+
+            // If the edited user is the currently logged in admin, update active session state
+            if (currentAdmin && id === currentAdmin.uid) {
+                if (updateData.isHeadAdmin !== undefined && currentAdminData) {
+                    currentAdminData.isHeadAdmin = updateData.isHeadAdmin;
+                }
+                checkIncidentAccess();
+                updateAdminInfo();
+            }
+
+            showToast("User updated", "success");
+            document.getElementById("editUserModal").classList.remove("active");
+            loadUsers();
+        } catch (err) {
+            console.error("!!! [ERROR] Edit user failed:", err);
+            showToast("Failed to update user: " + err.message, "error");
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalContent;
+        }
+    });
+}
+
+async function loadPending() {
+    const pendingTable = $('#pendingTable');
+    const count = document.getElementById("pendingCount");
+
+    if (pendingTable.length === 0) return;
+
+    try {
+        const snap = await db.collection("users")
+            .where("status", "==", "pending")
+            .get();
+
+        if (count) count.textContent = snap.size;
+
+        if ($.fn.DataTable.isDataTable('#pendingTable')) {
+            pendingTable.DataTable().clear().destroy();
+        }
+
+        const tbody = pendingTable.find('tbody');
+
+        if (snap.empty) {
+            tbody.html('');
+
+            // Still initialize an empty DataTable so the structure exists
+            pendingTable.DataTable({
+                responsive: false,
+                pageLength: 10,
+                lengthMenu: [10, 8, 5],
+                autoWidth: false,
+                pagingType: "simple_numbers",
+                language: {
+                    emptyTable: "No pending accounts",
+                    search: "",
+                    searchPlaceholder: "Search...",
+                    lengthMenu: "Show _MENU_ entries"
+                }
+            });
+            return;
+        }
+
+        tbody.html(snap.docs.map(doc => {
+            const u = doc.data();
+            return `
+                <tr>
+                    <td style="vertical-align: middle;"><strong>${u.name}</strong></td>
+                    <td style="vertical-align: middle;">${u.email}</td>
+                    <td style="vertical-align: middle;">ID: ${u.studentId || u.facultyId || "N/A"}</td>
+                    <td style="text-align: center; vertical-align: middle;">
+                        <div style="display:flex; gap:0.5rem; justify-content:center;">
+                            <button class="btn btn-success btn-sm" onclick="approveUser('${doc.id}')">Approve</button>
+                            <button class="btn btn-danger btn-sm" onclick="rejectUser('${doc.id}')">Reject</button>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join(""));
+
+        pendingTable.DataTable({
+            responsive: false,
+            pageLength: 10,
+            lengthMenu: [10, 8, 5],
+            autoWidth: false,
+            pagingType: "simple_numbers",
+            language: {
+                search: "",
+                searchPlaceholder: "Search...",
+                lengthMenu: "Show _MENU_ entries",
+            },
+            columnDefs: [
+                { orderable: false, targets: [0, 3] }
+            ],
+            order: [[1, 'asc']]
+        });
+    } catch (err) {
+        console.error("Error loading pending users:", err);
+    }
+}
+
+async function approveUser(uid) {
+    try {
+        const result = await auth.approveAccount(uid);
+        if (result.emailSent) {
+            showToast("User approved and activation email sent.", "success");
+        } else {
+            console.error(`Account ${uid} was approved, but its activation email could not be sent:`, result.emailError);
+            showToast("User approved, but the activation email could not be sent. Check SMTP settings and server logs.", "warning");
+        }
+        loadPending();
+        loadUsers();
+    } catch (error) {
+        console.error("Failed to approve user:", error);
+        showToast(`Failed to approve user: ${error.message}`, "error");
+    }
+}
+
+async function rejectUser(uid) {
+    const userDoc = await db.collection("users").doc(uid).get();
+    const email = userDoc.data()?.email || "this user";
+
+    if (!await showConfirm({
+        title: 'Reject User',
+        message: `Reject and delete account for ${email}?`,
+        confirmText: 'Reject',
+        type: 'danger'
+    })) return;
+
+    await db.collection("users").doc(uid).delete();
+    showToast("User rejected.", "error");
+    loadPending();
+    loadUsers();
+}
+
+
+
+function initializeProfileDropdown() {
+    const profileDropdown = document.getElementById('profileDropdown');
+    const profileTrigger = document.getElementById('profileTrigger');
+    const viewProfileBtn = document.getElementById('viewProfileBtn');
+    const changePassBtn = document.getElementById('changePassBtn');
+    const profilePageChangePassBtn = document.getElementById('profilePageChangePassBtn');
+
+    if (!profileTrigger || !profileDropdown) return;
+
+    profileTrigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = profileDropdown.classList.contains('open');
+        profileDropdown.classList.toggle('open', !isOpen);
+        profileTrigger.setAttribute('aria-expanded', String(!isOpen));
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!profileDropdown.contains(e.target)) {
+            profileDropdown.classList.remove('open');
+            profileTrigger.setAttribute('aria-expanded', 'false');
+        }
+    });
+
+    if (viewProfileBtn) {
+        viewProfileBtn.addEventListener('click', () => {
+            profileDropdown.classList.remove('open');
+            window.switchView('profile');
+        });
+    }
+
+    const profilePageEditBtn = document.getElementById('profilePageEditBtn');
+    if (profilePageEditBtn) {
+        profilePageEditBtn.addEventListener('click', () => {
+            openAdminProfileModal();
+        });
+    }
+    document.getElementById('saveAdminProfileBtn')?.addEventListener('click', saveAdminProfile);
+    const openChangePassword = () => {
+        profileDropdown.classList.remove('open');
+        const email = (auth.currentUser && auth.currentUser.email) || (currentAdminData && currentAdminData.email) || '';
+        const hintEl = document.getElementById('changePassEmailHint');
+        if (hintEl && email) {
+            hintEl.innerHTML = `Verification code will be sent to <strong>${email}</strong>`;
+        }
+        document.getElementById('changePassModal')?.classList.add('active');
+    };
+    changePassBtn?.addEventListener('click', openChangePassword);
+    profilePageChangePassBtn?.addEventListener('click', openChangePassword);
+
+    const closeProfileModal = document.getElementById('closeProfileModal');
+    if (closeProfileModal) {
+        closeProfileModal.addEventListener('click', () => {
+            document.getElementById('profileModal')?.classList.remove('active');
+        });
+    }
+    const closeProfileModalFooter = document.getElementById('closeProfileModalFooter');
+    if (closeProfileModalFooter) {
+        closeProfileModalFooter.addEventListener('click', () => {
+            document.getElementById('profileModal')?.classList.remove('active');
+        });
+    }
+
+    const closeChangePassModal = document.getElementById('closeChangePassModal');
+    const cancelChangePass = document.getElementById('cancelChangePass');
+    const changePassModal = document.getElementById('changePassModal');
+
+    const closeChangePw = () => {
+        changePassModal?.classList.remove('active');
+        document.getElementById('changePassForm')?.reset();
+    };
+
+    if (closeChangePassModal) closeChangePassModal.addEventListener('click', closeChangePw);
+    if (cancelChangePass) cancelChangePass.addEventListener('click', closeChangePw);
+
+    if (changePassModal) {
+        changePassModal.addEventListener('click', (e) => {
+            if (e.target === changePassModal) closeChangePw();
+        });
+    }
+
+    // Email OTP sending logic for Admin change password
+    const sendOtpBtn = document.getElementById('sendChangePassOtpBtn');
+    const sendOtpText = document.getElementById('sendChangePassOtpText');
+    let otpCooldownTimer = null;
+
+    if (sendOtpBtn) {
+        sendOtpBtn.addEventListener('click', async () => {
+            const email = (auth.currentUser && auth.currentUser.email) || (currentAdminData && currentAdminData.email) || '';
+            if (!email) {
+                showToast('Unable to determine account email.', 'error');
+                return;
+            }
+
+            sendOtpBtn.disabled = true;
+            if (sendOtpText) sendOtpText.textContent = 'Sending...';
+
+            try {
+                const res = await auth.sendPasswordOtp(email);
+                showToast(res.message || 'Verification code sent to your email!', 'success');
+                if (res.devCode) {
+                    showToast(`[DEV MODE] Verification Code: ${res.devCode}`, 'info');
+                    const otpInput = document.getElementById('changePassOtpCode');
+                    if (otpInput) otpInput.value = res.devCode;
+                }
+
+                // 60-second cooldown
+                let secondsLeft = 60;
+                if (sendOtpText) sendOtpText.textContent = `Resend (${secondsLeft}s)`;
+                clearInterval(otpCooldownTimer);
+                otpCooldownTimer = setInterval(() => {
+                    secondsLeft--;
+                    if (secondsLeft <= 0) {
+                        clearInterval(otpCooldownTimer);
+                        sendOtpBtn.disabled = false;
+                        if (sendOtpText) sendOtpText.textContent = 'Resend Code';
+                    } else {
+                        if (sendOtpText) sendOtpText.textContent = `Resend (${secondsLeft}s)`;
+                    }
+                }, 1000);
+            } catch (err) {
+                console.error('OTP request error:', err);
+                showToast(err.message || 'Failed to send verification code.', 'error');
+                sendOtpBtn.disabled = false;
+                if (sendOtpText) sendOtpText.textContent = 'Send Code';
+            }
+        });
+    }
+
+    const changePassForm = document.getElementById('changePassForm');
+    if (changePassForm) {
+        changePassForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const currentPassword = document.getElementById('currentPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+            const otpCode = document.getElementById('changePassOtpCode')?.value.trim();
+
+            if (!otpCode) {
+                showToast('Please enter the 6-digit email verification code.', 'error');
+                return;
+            }
+
+            if (newPassword.length < 6) {
+                showToast('New password must be at least 6 characters', 'error');
+                return;
+            }
+
+            if (newPassword !== confirmPassword) {
+                showToast('New passwords do not match', 'error');
+                return;
+            }
+
+            const submitBtn = changePassForm.querySelector('button[type="submit"]');
+            const originalContent = submitBtn.innerHTML;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span>Updating...</span>';
+
+            try {
+                const user = auth.currentUser;
+                await user.updatePassword(newPassword, currentPassword, otpCode);
+                showToast('Password updated successfully!', 'success');
+                closeChangePw();
+            } catch (error) {
+                console.error('Change password error:', error);
+                showToast(error.message || 'Failed to update password', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalContent;
+            }
+        });
+    }
+}
+
+function initializeTheme() {
+    const themeCheckbox = document.getElementById('themeCheckbox'); // sidebar
+    const topbarCheckbox = document.getElementById('topbarThemeCheckbox'); // mobile topbar
+    const themeLabel = document.querySelector('.theme-label');
+    const themeIcon = document.querySelector('.theme-icon');
+    const topbarThemeIcon = document.querySelector('.topbar-theme-toggle .theme-switch-track > i');
+
+    const applyTheme = (isDark) => {
+        // APPLY THEME (your system uses data-theme)
+        document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+
+        // Update label
+        if (themeLabel) {
+            themeLabel.textContent = isDark ? 'Dark Mode' : 'Light Mode';
+        }
+
+        // Update icon
+        if (themeIcon) {
+            themeIcon.innerHTML = isDark
+                ? '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'
+                : '<circle cx="12" cy="12" r="5"></circle>\
+                   <line x1="12" y1="1" x2="12" y2="3"></line>\
+                   <line x1="12" y1="21" x2="12" y2="23"></line>\
+                   <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>\
+                   <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>\
+                   <line x1="1" y1="12" x2="3" y2="12"></line>\
+                   <line x1="21" y1="12" x2="23" y2="12"></line>\
+                   <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>\
+                   <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>';
+
+            themeIcon.setAttribute('fill', isDark ? 'currentColor' : 'none');
+        }
+        if (topbarThemeIcon) {
+            topbarThemeIcon.className = isDark ? 'fa-solid fa-sun' : 'fa-regular fa-moon';
+        }
+
+        // SYNC BOTH TOGGLES
+        if (themeCheckbox) themeCheckbox.checked = isDark;
+        if (topbarCheckbox) topbarCheckbox.checked = isDark;
+
+        // SAVE THEME
+        try {
+            localStorage.setItem('mislend-theme', isDark ? 'dark' : 'light');
+        } catch (e) { }
+    };
+
+    // LOAD SAVED THEME
+    let savedTheme;
+    try {
+        savedTheme = localStorage.getItem('mislend-theme');
+    } catch (e) {
+        savedTheme = null;
+    }
+
+    // AUTO DETECT IF NONE
+    if (!savedTheme) {
+        savedTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+
+    // APPLY INITIAL THEME
+    applyTheme(savedTheme === 'dark');
+
+    // SIDEBAR TOGGLE
+    if (themeCheckbox) {
+        themeCheckbox.addEventListener('change', () => {
+            applyTheme(themeCheckbox.checked);
+        });
+    }
+
+    // TOPBAR (MOBILE) TOGGLE
+    if (topbarCheckbox) {
+        topbarCheckbox.addEventListener('change', () => {
+            applyTheme(topbarCheckbox.checked);
+        });
+    }
+}
+
+async function sendSMSOverdue(userId, equipmentName, borrowingId) {
+    try {
+        if (!borrowingId) throw new Error('Borrowing record could not be identified.');
+        const result = await auth.sendOverdueReminder(borrowingId, 'sms');
+        showToast(result.message || `SMS reminder sent for ${equipmentName}.`, result.trackingSaved === false ? 'warning' : 'success');
+        loadDashboardData();
+    } catch (error) {
+        console.error("Error sending SMS:", error);
+        showToast("Failed to send SMS: " + error.message, "error");
+    }
+}
+
+async function sendEmailOverdue(userId, equipmentName, borrowingId) {
+    try {
+        if (!borrowingId) throw new Error('Borrowing record could not be identified.');
+        const result = await auth.sendOverdueReminder(borrowingId, 'email');
+        showToast(result.message || `Email reminder sent for ${equipmentName}.`, 'success');
+        loadDashboardData();
+    } catch (error) {
+        console.error("Error sending Email:", error);
+        showToast("Failed to send email: " + error.message, "error");
+    }
+}
+
+window.generateQRCode = generateQRCode;
+window.deleteEquipment = deleteEquipment;
+window.deleteUser = deleteUser;
+window.suspendUser = suspendUser;
+window.unsuspendUser = unsuspendUser;
+window.sendSMSOverdue = sendSMSOverdue;
+window.sendEmailOverdue = sendEmailOverdue;
+window.openStudentIdCaptureModal = openStudentIdCaptureModal;
+window.closeStudentIdCaptureModal = closeStudentIdCaptureModal;
+window.approveBorrow = approveBorrow;
+window.rejectBorrow = rejectBorrow;
+window.approveReturn = approveReturn;
+window.rejectReturn = rejectReturn;
+window.approveExtension = approveExtension;
+window.rejectExtension = rejectExtension;
+async function uploadAdminPhoto(input) {
+    if (input.files && input.files[0]) {
+        if (typeof window.openImageCropper === 'function') {
+            window.openImageCropper({
+                file: input.files[0],
+                title: 'Crop Profile Photo',
+                shape: 'square',
+                onCrop: async (croppedBase64) => {
+                    try {
+                        showToast("Saving cropped photo...", "info");
+
+                        if (!currentAdmin) {
+                            throw new Error("You must be logged in to change your photo.");
+                        }
+
+                        await db.collection('users').doc(currentAdmin.uid).update({
+                            photoURL: croppedBase64,
+                            updatedAt: db.FieldValue.serverTimestamp()
+                        });
+
+                        if (currentAdminData) {
+                            currentAdminData.photoURL = croppedBase64;
+                        }
+
+                        updateAdminInfo();
+                        showToast("Profile photo updated successfully!", "success");
+                    } catch (err) {
+                        console.error("Admin photo upload error:", err);
+                        showToast("Failed to update photo: " + err.message, "error");
+                    } finally {
+                        input.value = "";
+                    }
+                },
+                onCancel: () => {
+                    input.value = "";
+                }
+            });
+        } else {
+            // Fallback
+            try {
+                showToast("Processing photo...", "info");
+                const base64Data = await resizeImage(input.files[0]);
+                if (!currentAdmin) throw new Error("You must be logged in to change your photo.");
+                await db.collection('users').doc(currentAdmin.uid).update({
+                    photoURL: base64Data,
+                    updatedAt: db.FieldValue.serverTimestamp()
+                });
+                if (currentAdminData) currentAdminData.photoURL = base64Data;
+                updateAdminInfo();
+                showToast("Profile photo updated!", "success");
+            } catch (err) {
+                console.error("Admin photo upload error:", err);
+                showToast("Failed to update photo: " + err.message, "error");
+            }
+        }
+    }
+}
+
+async function previewUserPhoto(input) {
+    if (input.files && input.files[0]) {
+        if (typeof window.openImageCropper === 'function') {
+            window.openImageCropper({
+                file: input.files[0],
+                title: 'Crop User Photo',
+                shape: 'square',
+                onCrop: (croppedBase64) => {
+                    const avatarContainer = document.getElementById('editUserAvatarContainer');
+                    if (avatarContainer) {
+                        avatarContainer.innerHTML = `<img src="${croppedBase64}" alt="Preview" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;">`;
+                    }
+                    input._croppedBase64 = croppedBase64;
+                },
+                onCancel: () => {
+                    if (!input._croppedBase64) input.value = "";
+                }
+            });
+        } else {
+            const container = document.getElementById('editUserAvatarContainer');
+            if (container) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    container.innerHTML = `<img src="${e.target.result}" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;">`;
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+    }
+}
+
+async function previewNewUserPhoto(input) {
+    if (input.files && input.files[0]) {
+        if (typeof window.openImageCropper === 'function') {
+            window.openImageCropper({
+                file: input.files[0],
+                title: 'Crop New User Photo',
+                shape: 'square',
+                onCrop: (croppedBase64) => {
+                    const avatarContainer = document.getElementById('addUserAvatarContainer');
+                    if (avatarContainer) {
+                        avatarContainer.innerHTML = `<img src="${croppedBase64}" alt="Preview" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;">`;
+                    }
+                    input._croppedBase64 = croppedBase64;
+                },
+                onCancel: () => {
+                    if (!input._croppedBase64) input.value = "";
+                }
+            });
+        } else {
+            const container = document.getElementById('addUserAvatarContainer');
+            if (container) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    container.innerHTML = `<img src="${e.target.result}" style="width: 100%; height: 100%; object-fit: contain; border-radius: 50%;">`;
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+    }
+}
+
+window.adminConfirmReturn = adminConfirmReturn;
+window.uploadAdminPhoto = uploadAdminPhoto;
+window.previewUserPhoto = previewUserPhoto;
+window.previewNewUserPhoto = previewNewUserPhoto;
+window.openEditUser = openEditUser;
+window.rejectReturn = rejectReturn;
+window.approveExtension = approveExtension;
+window.rejectExtension = rejectExtension;
+
+function openAdminSetPassword(userId, userName, userEmail, userPhotoURL) {
+    const form = document.getElementById('adminSetPasswordForm');
+    if (form) form.reset();
+    adminPassSwitchTab('direct');
+
+    document.getElementById('adminSetPasswordUserId').value = userId;
+    document.getElementById('adminSetPasswordUserEmail').value = userEmail;
+    document.getElementById('adminSetPasswordUserName').textContent = userName;
+    document.getElementById('adminSetPasswordUserEmailDisplay').textContent = userEmail;
+
+    const avatarEl = document.getElementById('adminSetPasswordAvatar');
+    if (avatarEl) {
+        if (userPhotoURL && userPhotoURL !== '' && userPhotoURL !== 'undefined') {
+            avatarEl.innerHTML = `<img src="${userPhotoURL}" alt="${userName}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+        } else {
+            avatarEl.innerHTML = '';
+            avatarEl.textContent = getUserInitials(userName);
+        }
+    }
+
+    ['adminNewPassword', 'adminConfirmPassword'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    });
+
+    document.getElementById('adminSetPasswordModal').classList.add('active');
+}
+
+function getAdminSetPasswordError(err) {
+    const code = String(err && err.code ? err.code : '');
+    const details = err && err.details;
+    const detailText = typeof details === 'string'
+        ? details
+        : (details && details.message) ? details.message : '';
+    const message = (err && err.message) || '';
+
+    if (code === 'not-found' && /Authentication account/i.test(message + detailText)) {
+        return message || detailText;
+    }
+    if (code === 'not-found' || /NOT_FOUND/i.test(message) || /does not exist/i.test(message)) {
+        return message || 'User not found.';
+    }
+    if (code === 'unauthenticated' || code === 'auth/unauthenticated') {
+        return 'Please sign in again, then retry.';
+    }
+    if (code === 'permission-denied') {
+        return message || 'Only admins can change other users’ passwords.';
+    }
+    if (code === 'invalid-argument' || code === 'failed-precondition') {
+        return detailText || message || 'Could not update this password.';
+    }
+    if (code === 'internal' || /^internal$/i.test(message)) {
+        return message || 'The server could not update this password. Please try again.';
+    }
+    return detailText || message || 'Failed to update password';
+}
+
+function closeAdminSetPasswordModal() {
+    document.getElementById('adminSetPasswordModal').classList.remove('active');
+    const form = document.getElementById('adminSetPasswordForm');
+    if (form) form.reset();
+}
+
+function adminPassSwitchTab(tab) {
+    const emailTab = document.getElementById('adminPassTabEmail');
+    const directTab = document.getElementById('adminPassTabDirect');
+    const btnEmail = document.getElementById('tabResetEmail');
+    const btnDirect = document.getElementById('tabSetDirect');
+    if (!emailTab || !directTab) return;
+
+    if (tab === 'email') {
+        emailTab.style.display = '';
+        directTab.style.display = 'none';
+        if (btnEmail) { btnEmail.className = 'btn btn-primary btn-sm'; btnEmail.style.flex = '1'; }
+        if (btnDirect) { btnDirect.className = 'btn btn-secondary btn-sm'; btnDirect.style.flex = '1'; }
+    } else {
+        emailTab.style.display = 'none';
+        directTab.style.display = '';
+        if (btnEmail) { btnEmail.className = 'btn btn-secondary btn-sm'; btnEmail.style.flex = '1'; }
+        if (btnDirect) { btnDirect.className = 'btn btn-primary btn-sm'; btnDirect.style.flex = '1'; }
+    }
+}
+
+// Wire up modal controls once DOM is ready
+(function initAdminSetPassword() {
+    const modal = document.getElementById('adminSetPasswordModal');
+    const closeBtn = document.getElementById('closeAdminSetPasswordModal');
+    const cancelBtn = document.getElementById('cancelAdminSetPassword');
+    const cancelBtn2 = document.getElementById('cancelAdminSetPassword2');
+    const sendBtn = document.getElementById('adminSendResetEmailBtn');
+    const form = document.getElementById('adminSetPasswordForm');
+
+    const close = () => closeAdminSetPasswordModal();
+
+    if (closeBtn) closeBtn.addEventListener('click', close);
+    if (cancelBtn) cancelBtn.addEventListener('click', close);
+    if (cancelBtn2) cancelBtn2.addEventListener('click', close);
+    if (modal) modal.addEventListener('click', e => { if (e.target === modal) close(); });
+
+    // Send a password-reset email through the application API.
+    if (sendBtn) {
+        sendBtn.addEventListener('click', async () => {
+            const uid = document.getElementById('adminSetPasswordUserId').value;
+            if (!uid) {
+                showToast('No user selected.', 'error');
+                return;
+            }
+
+            const orig = sendBtn.innerHTML;
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Sending…';
+
+            try {
+                const result = await auth.sendAdminPasswordResetLink(uid);
+                showToast(result.message || 'Password reset link sent by email.', 'success');
+                close();
+            } catch (err) {
+                console.error('Reset email error:', err);
+                showToast('Failed to send reset email: ' + (err.message || ''), 'error');
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.innerHTML = orig;
+            }
+        });
+    }
+
+    if (form) {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const uid = document.getElementById('adminSetPasswordUserId').value;
+            const newPassword = document.getElementById('adminNewPassword').value;
+            const confirmPassword = document.getElementById('adminConfirmPassword').value;
+
+            if (!uid) {
+                showToast('No user selected.', 'error');
+                return;
+            }
+            if (newPassword.length < 6) {
+                showToast('New password must be at least 6 characters', 'error');
+                return;
+            }
+            if (newPassword !== confirmPassword) {
+                showToast('New passwords do not match', 'error');
+                return;
+            }
+
+            const submitBtn = document.getElementById('adminSetPasswordSubmitBtn') || form.querySelector('button[type="submit"]');
+            const originalContent = submitBtn.innerHTML;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span>Updating...</span>';
+
+            try {
+                await auth.setUserPassword(uid, newPassword);
+                showToast('Password updated. The user can sign in with the new password.', 'success');
+                close();
+            } catch (err) {
+                console.error('Admin set password error:', err);
+                showToast(getAdminSetPasswordError(err), 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalContent;
+            }
+        });
+    }
+})();
+
+window.openAdminSetPassword = openAdminSetPassword;
+window.adminPassSwitchTab = adminPassSwitchTab;
+window.closeAdminSetPasswordModal = closeAdminSetPasswordModal;
+window.adminConfirmReturn = adminConfirmReturn;
+window.openImageZoomModal = openImageZoomModal;
+window.closeImageZoomModal = closeImageZoomModal;
+
+// ═══════════════════════════════════════════════════════════════
+// INCIDENT REPORT MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+let currentIncidentId = null;
+let incidentChatUnsubscribe = null;
+
+async function loadAllIncidents() {
+    const listEl = document.getElementById('adminIncidentsList');
+    const detailPanel = document.getElementById('incidentDetailPanel');
+    if (!listEl) return;
+
+    const showingDetail = Boolean(currentIncidentId);
+    listEl.style.display = showingDetail ? 'none' : '';
+    if (detailPanel) detailPanel.style.display = showingDetail ? '' : 'none';
+
+    try {
+        let snapshot;
+        try {
+            snapshot = await db.collection('incidents')
+                .orderBy('createdAt', 'desc')
+                .get();
+        } catch (err) {
+            console.warn('orderBy query failed, falling back to simple get:', err);
+            snapshot = await db.collection('incidents').get();
+        }
+
+        let incidents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        incidents.sort((a, b) => {
+            const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+            const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+            return timeB - timeA;
+        });
+
+        if (incidents.length === 0) {
+            listEl.innerHTML = `
+                <div class="empty-state">
+                    <h3>No incident reports</h3>
+                    <p>Borrowers can submit damage reports from their dashboard</p>
+                </div>
+            `;
+            return;
+        }
+
+        listEl.innerHTML = incidents.map(inc => {
+            const statusColors = {
+                pending: 'background: rgba(245,158,11,0.1); color: #92400e;',
+                under_review: 'background: rgba(59,130,246,0.1); color: #1e40af;',
+                approved: 'background: rgba(16,185,129,0.1); color: #065f46;',
+                resolved: 'background: rgba(107,114,128,0.1); color: #374151;'
+            };
+            const statusStyle = statusColors[inc.status] || statusColors.pending;
+            const statusLabel = (inc.status || 'pending').replace('_', ' ').toUpperCase();
+            const dateStr = inc.createdAt?.toDate ? inc.createdAt.toDate().toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : (inc.createdAt ? new Date(inc.createdAt).toLocaleString() : 'N/A');
+            const reporterName = inc.reporterName || inc.userName || inc.userEmail || 'Borrower';
+
+            return `
+                <div class="incident-card" onclick="openIncidentDetail('${inc.id}')">
+                    <div class="incident-card-header">
+                        <div>
+                            <strong>${inc.equipmentName || 'Unknown Equipment'}</strong>
+                            <span style="font-size: 0.8rem; color: var(--text-secondary);"> — ${inc.equipmentCode || ''}</span>
+                        </div>
+                        <span class="badge" style="${statusStyle} padding: 4px 10px; border-radius: 6px; font-size: 0.7rem; font-weight: 600;">${statusLabel}</span>
+                    </div>
+                    <div class="incident-card-body">
+                        <p style="margin: 0.25rem 0; color: var(--text-secondary); font-size: 0.85rem;">
+                            Reported by <strong>${reporterName}</strong> (${capitalize(inc.reporterRole || 'user')}) — ${dateStr}
+                        </p>
+                        <p style="margin: 0.5rem 0 0 0; font-size: 0.875rem; color: var(--text-primary);">${(inc.description || '').substring(0, 120)}${(inc.description || '').length > 120 ? '...' : ''}</p>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+    } catch (error) {
+        console.error('Error loading incidents:', error);
+        listEl.innerHTML = '<div class="empty-state"><h3>Error loading incidents</h3><p>Please try again later</p></div>';
+    }
+}
+
+function escapeIncidentHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    })[char]);
+}
+
+async function openIncidentDetail(incidentId) {
+    currentIncidentId = incidentId;
+    const listEl = document.getElementById('adminIncidentsList');
+    const detailPanel = document.getElementById('incidentDetailPanel');
+    if (listEl) listEl.style.display = 'none';
+    if (detailPanel) detailPanel.style.display = '';
+
+    try {
+        const doc = await db.collection('incidents').doc(incidentId).get();
+        if (!doc.exists) {
+            currentIncidentId = null;
+            showToast('This incident report could not be found.', 'error');
+            loadAllIncidents();
+            return;
+        }
+        const inc = { id: doc.id, ...doc.data() };
+
+        // Status
+        const statusEl = document.getElementById('incidentDetailStatus');
+        const statusLabel = (inc.status || 'pending').replace('_', ' ').toUpperCase();
+        if (statusEl) statusEl.innerHTML = `<span class="badge badge-status">${statusLabel}</span>`;
+
+        // Info card
+        const infoCard = document.getElementById('incidentInfoCard');
+        if (infoCard) {
+            const dateStr = inc.createdAt?.toDate ? inc.createdAt.toDate().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A';
+            infoCard.innerHTML = `
+                <div class="incident-info-grid">
+                    <div><strong>Reporter:</strong> ${inc.reporterName} (${capitalize(inc.reporterRole || 'user')})</div>
+                    <div><strong>Email:</strong> ${inc.reporterEmail || 'N/A'}</div>
+                    <div><strong>ID:</strong> ${inc.reporterId_number || 'N/A'}</div>
+                    <div><strong>Mobile:</strong> ${escapeIncidentHtml(inc.reporterMobile || 'N/A')}</div>
+                    <div><strong>Department / program:</strong> ${escapeIncidentHtml(inc.reporterDepartment || 'N/A')}</div>
+                    <div><strong>Equipment:</strong> ${inc.equipmentName} (${inc.equipmentCode || 'N/A'}) — ${escapeIncidentHtml(inc.equipmentCategory || 'N/A')}</div>
+                    <div><strong>Report submitted:</strong> ${dateStr}</div>
+                    <div><strong>Incident occurred:</strong> ${escapeIncidentHtml(inc.incidentDate || 'N/A')}${inc.incidentTime ? ` at ${escapeIncidentHtml(inc.incidentTime)}` : ''}</div>
+                    <div><strong>Type / severity:</strong> ${escapeIncidentHtml(inc.incidentType || 'N/A')} / ${escapeIncidentHtml(inc.severity || 'N/A')}</div>
+                    <div><strong>Location:</strong> ${escapeIncidentHtml(inc.location || 'N/A')}</div>
+                    <div><strong>Status:</strong> ${statusLabel}</div>
+                </div>
+                <div style="margin-top: 0.75rem;">
+                    <strong>Description:</strong>
+                    <p style="margin: 0.25rem 0; color: var(--text-secondary);">${escapeIncidentHtml(inc.description || 'No description')}</p>
+                </div>
+                <div style="margin-top: 0.75rem;">
+                    <strong>Immediate action taken:</strong>
+                    <p style="margin: 0.25rem 0; color: var(--text-secondary);">${escapeIncidentHtml(inc.actionTaken || 'Not provided')}</p>
+                </div>
+                ${inc.witnesses ? `<div style="margin-top: 0.75rem;"><strong>Witnesses:</strong> ${escapeIncidentHtml(inc.witnesses)}</div>` : ''}
+                <div style="margin-top: 0.75rem;"><strong>Reporter declaration:</strong> ${inc.declarationAccepted ? 'Accepted' : 'Not recorded'}</div>
+                ${inc.photoURL ? `<div style="margin-top: 0.75rem;"><strong>Photo:</strong><br><img src="${inc.photoURL}" style="max-width: 300px; border-radius: 8px; margin-top: 0.5rem; cursor: pointer;" onclick="openImageZoomModal(this.src)" /></div>` : ''}
+                ${inc.approvedBy ? `<div style="margin-top: 0.75rem; padding: 0.5rem; background: rgba(16,185,129,0.1); border-radius: 8px;"><strong>Approved by:</strong> ${escapeIncidentHtml(inc.approvedByName || inc.approvedBy)}${inc.approvedByEmail ? ` (${escapeIncidentHtml(inc.approvedByEmail)})` : ''}</div>` : ''}
+            `;
+        }
+
+        // Show/hide actions
+        const actionsRow = document.getElementById('incidentActionsRow');
+        const approveBtn = document.getElementById('approveIncidentBtn');
+        const exportBtn = document.getElementById('exportIncidentPdfBtn');
+        if (actionsRow) {
+            actionsRow.style.display = 'flex';
+        }
+        if (approveBtn) {
+            approveBtn.style.display = (!isHeadAdmin() || inc.status === 'approved' || inc.status === 'resolved') ? 'none' : 'inline-flex';
+        }
+        if (exportBtn) {
+            exportBtn.style.display = 'inline-flex';
+        }
+
+        // Load chat messages (real-time)
+        if (incidentChatUnsubscribe) incidentChatUnsubscribe();
+        const chatContainer = document.getElementById('adminChatMessages');
+        incidentChatUnsubscribe = db.collection('incidents').doc(incidentId)
+            .collection('messages')
+            .orderBy('timestamp', 'asc')
+            .onSnapshot(snapshot => {
+                if (!chatContainer) return;
+                const messages = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                if (messages.length === 0) {
+                    chatContainer.innerHTML = '<div style="text-align: center; color: var(--text-tertiary); padding: 2rem;">No messages yet. Start the conversation.</div>';
+                } else {
+                    let previousDay = '';
+                    const isCurrentAdminMessage = message => {
+                        const senderRole = String(message.senderRole || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+                        return ['admin', 'administrator', 'head_admin'].includes(senderRole) ||
+                            message.senderId === currentAdmin?.uid;
+                    };
+                    chatContainer.innerHTML = messages.map((msg, index) => {
+                        const isMe = isCurrentAdminMessage(msg);
+                        const timestamp = msg.timestamp?.toDate ? msg.timestamp.toDate() : null;
+                        const day = timestamp ? timestamp.toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : '';
+                        const previousTimestamp = index > 0 && messages[index - 1].timestamp?.toDate ? messages[index - 1].timestamp.toDate() : null;
+                        const nextTimestamp = index < messages.length - 1 && messages[index + 1].timestamp?.toDate ? messages[index + 1].timestamp.toDate() : null;
+                        const previousIsMe = index > 0 && (!timestamp || !previousTimestamp || timestamp.toDateString() === previousTimestamp.toDateString()) && isCurrentAdminMessage(messages[index - 1]);
+                        const nextIsMe = index < messages.length - 1 && (!timestamp || !nextTimestamp || timestamp.toDateString() === nextTimestamp.toDateString()) && isCurrentAdminMessage(messages[index + 1]);
+                        const groupClass = previousIsMe
+                            ? (nextIsMe ? 'chat-group-middle' : 'chat-group-end')
+                            : (nextIsMe ? 'chat-group-start' : 'chat-group-single');
+                        const time = timestamp ? timestamp.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : '';
+                        const dayDivider = day && day !== previousDay
+                            ? `<div class="chat-day-divider"><span>${day}</span></div>`
+                            : '';
+                        previousDay = day || previousDay;
+                        return `
+                            ${dayDivider}
+                            <div class="chat-bubble ${isMe ? 'chat-admin chat-mine' : 'chat-user chat-theirs'} ${groupClass}" style="align-self: ${isMe ? 'flex-end' : 'flex-start'}; margin-left: ${isMe ? 'auto' : '0'};">
+                                <div class="chat-sender">${msg.senderName} <span class="chat-role">(${capitalize(msg.senderRole)})</span></div>
+                                <div class="chat-text">${msg.message}</div>
+                                <div class="chat-time">${time}</div>
+                            </div>
+                        `;
+                    }).join('');
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+            });
+
+        // Mark as under_review if pending
+        if (inc.status === 'pending') {
+            await db.collection('incidents').doc(incidentId).update({ status: 'under_review' });
+            const statusLabel = 'UNDER REVIEW';
+            const statusEl = document.getElementById('incidentDetailStatus');
+            const infoStatus = document.querySelector('#incidentInfoCard .incident-info-grid > div:last-child');
+            if (statusEl) statusEl.innerHTML = `<span class="badge badge-status">${statusLabel}</span>`;
+            if (infoStatus) infoStatus.innerHTML = `<strong>Status:</strong> ${statusLabel}`;
+        }
+
+    } catch (error) {
+        console.error('Error opening incident detail:', error);
+        showToast('Failed to load incident details', 'error');
+    }
+}
+
+async function sendAdminIncidentMessage() {
+    if (!currentIncidentId) return;
+    const input = document.getElementById('adminChatInput');
+    const message = input?.value.trim();
+    if (!message) return;
+
+    try {
+        await db.collection('incidents').doc(currentIncidentId).collection('messages').add({
+            senderId: currentAdmin.uid,
+            senderName: currentAdminData?.name || 'Administrator',
+            senderRole: 'admin',
+            message: message,
+            timestamp: db.FieldValue.serverTimestamp()
+        });
+        input.value = '';
+    } catch (error) {
+        console.error('Error sending message:', error);
+        showToast('Failed to send message', 'error');
+    }
+}
+
+async function approveIncident() {
+    if (!currentIncidentId) return;
+    if (!isHeadAdmin()) {
+        showToast('Access denied: only the Head Admin can approve incident reports.', 'error');
+        return;
+    }
+
+    const approverName = currentAdminData?.name || currentAdmin.displayName || currentAdmin.email;
+    const approverEmail = currentAdmin.email || '';
+    if (!await showConfirm({
+        title: 'Approve Incident Report',
+        message: `Approve this incident report as ${approverName}${approverEmail ? ` (${approverEmail})` : ''}?`,
+        confirmText: 'Approve',
+        type: 'success'
+    })) return;
+
+    try {
+        await db.collection('incidents').doc(currentIncidentId).update({
+            status: 'approved'
+        });
+        showToast('Incident report approved', 'success');
+        openIncidentDetail(currentIncidentId);
+    } catch (error) {
+        console.error('Error approving incident:', error);
+        showToast(`Failed to approve: ${error.message || 'Please try again.'}`, 'error');
+    }
+}
+
+async function exportIncidentPDF() {
+    if (!currentIncidentId) return;
+
+    try {
+        showToast('Generating PDF...', 'info');
+        const doc = await db.collection('incidents').doc(currentIncidentId).get();
+        if (!doc.exists) {
+            throw new Error('Incident report could not be found.');
+        }
+        const inc = { id: doc.id, ...doc.data() };
+        let borrowing = {};
+        if (inc.borrowingId) {
+            const borrowingDoc = await db.collection('borrowings').doc(String(inc.borrowingId)).get();
+            if (!borrowingDoc.exists) {
+                throw new Error('The borrowing record linked to this incident report could not be found.');
+            }
+            borrowing = borrowingDoc.data();
+        }
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF('p', 'mm', 'a4');
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const margin = 16;
+        const contentWidth = pageWidth - 2 * margin;
+        const columnGap = 8;
+        const columnWidth = (contentWidth - columnGap) / 2;
+        let textShortened = false;
+
+        pdf.setFillColor(11, 31, 58);
+        pdf.rect(0, 0, pageWidth, 36, 'F');
+
+        // Helper to crop image to circle using Canvas
+        const getCircularLogo = (imgPath) => {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const size = Math.min(img.width, img.height);
+                    canvas.width = size;
+                    canvas.height = size;
+                    const ctx = canvas.getContext('2d');
+                    ctx.beginPath();
+                    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+                    ctx.clip();
+                    ctx.drawImage(img, (size - img.width) / 2, (size - img.height) / 2);
+                    resolve(canvas.toDataURL('image/png'));
+                };
+                img.onerror = () => resolve(imgPath); // Fallback to original
+                img.src = imgPath;
+            });
+        };
+
+        try {
+            const logo1Circle = await getCircularLogo('assets/images/CS1A.png');
+            pdf.addImage(logo1Circle, 'PNG', margin, 6, 23, 23);
+        } catch (e) {
+            console.error("Logo 1 error:", e);
+        }
+
+        try {
+            const logo2Circle = await getCircularLogo('assets/images/ucc.png');
+            pdf.addImage(logo2Circle, 'PNG', pageWidth - margin - 23, 6, 23, 23);
+        } catch (e) {
+            console.error("Logo 2 error:", e);
+        }
+
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(15);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('UNIVERSITY OF CALOOCAN CITY', pageWidth / 2, 15, { align: 'center' });
+        pdf.setFontSize(9);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text('Management Information Systems Office', pageWidth / 2, 21, { align: 'center' });
+        pdf.setFontSize(7.5);
+        pdf.text('Biglang Awa St., 11th Ave., East Grace Park, Caloocan City', pageWidth / 2, 27, { align: 'center' });
+
+        const refNo = `IR-${(inc.createdAt?.toDate ? inc.createdAt.toDate().getFullYear() : new Date().getFullYear())}-${currentIncidentId.substring(0, 6).toUpperCase()}`;
+        const dateStr = inc.createdAt?.toDate
+            ? inc.createdAt.toDate().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+            : new Date().toLocaleDateString('en-PH');
+
+        pdf.setTextColor(11, 31, 58);
+        pdf.setFontSize(15);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('INCIDENT REPORT', margin, 46);
+        pdf.setTextColor(90, 99, 110);
+        pdf.setFontSize(8);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text(`Reference No.: ${refNo}`, margin, 52);
+        pdf.text(`Date: ${dateStr}`, pageWidth - margin, 52, { align: 'right' });
+        pdf.setDrawColor(11, 31, 58);
+        pdf.setLineWidth(0.6);
+        pdf.line(margin, 56, pageWidth - margin, 56);
+
+        const drawSection = (title, y) => {
+            pdf.setFillColor(239, 243, 248);
+            pdf.rect(margin, y, contentWidth, 6, 'F');
+            pdf.setTextColor(11, 31, 58);
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(8);
+            pdf.text(title, margin + 2, y + 4.2);
+        };
+        const ellipsize = (value, width, fontSize) => {
+            const text = String(value || 'N/A').replace(/\s+/g, ' ').trim();
+            pdf.setFont('helvetica', 'normal');
+            pdf.setFontSize(fontSize);
+            if (pdf.getTextWidth(text) <= width) return text;
+            textShortened = true;
+            let shortened = text;
+            while (shortened.length > 1 && pdf.getTextWidth(`${shortened}...`) > width) {
+                shortened = shortened.slice(0, -1);
+            }
+            return `${shortened.trimEnd()}...`;
+        };
+        const drawField = (label, value, x, y, width) => {
+            pdf.setTextColor(100, 108, 118);
+            pdf.setFont('helvetica', 'bold');
+            pdf.setFontSize(6.5);
+            pdf.text(label.toUpperCase(), x, y);
+            pdf.setTextColor(35, 39, 44);
+            pdf.setFont('helvetica', 'normal');
+            pdf.setFontSize(8);
+            pdf.text(ellipsize(value, width, 8), x, y + 4);
+        };
+        const drawFieldRows = (fields, y, rowHeight) => {
+            fields.forEach((field, index) => {
+                const col = index % 2;
+                const row = Math.floor(index / 2);
+                const x = margin + col * (columnWidth + columnGap);
+                drawField(field[0], field[1], x, y + row * rowHeight, columnWidth);
+            });
+        };
+        const drawTextBlock = (title, value, y, maxLines) => {
+            drawSection(title, y);
+            pdf.setFont('helvetica', 'normal');
+            pdf.setFontSize(8);
+            let lines = pdf.splitTextToSize(String(value || 'Not provided.').replace(/\s+/g, ' ').trim(), contentWidth);
+            if (lines.length > maxLines) {
+                textShortened = true;
+                lines = lines.slice(0, maxLines);
+                let lastLine = lines[maxLines - 1].trimEnd();
+                while (lastLine.length > 1 && pdf.getTextWidth(`${lastLine}...`) > contentWidth) {
+                    lastLine = lastLine.slice(0, -1);
+                }
+                lines[maxLines - 1] = `${lastLine.trimEnd()}...`;
+            }
+            pdf.setTextColor(40, 44, 50);
+            lines.forEach((line, index) => pdf.text(line, margin + 1, y + 12 + index * 4.2));
+        };
+        const formatBorrowingDate = timestamp => {
+            if (!timestamp) return '';
+            const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+            if (Number.isNaN(date.getTime())) return '';
+            return date.toLocaleString('en-PH', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true
+            });
+        };
+
+        drawSection('REPORTER INFORMATION', 61);
+        drawFieldRows([
+            ['Name', inc.reporterName],
+            ['Role', capitalize(inc.reporterRole || 'User')],
+            ['Identification No.', inc.reporterId_number],
+            ['Email', inc.reporterEmail],
+            ['Mobile', inc.reporterMobile],
+            ['Department / Program', inc.reporterDepartment]
+        ], 71, 10);
+
+        drawSection('EQUIPMENT AND INCIDENT DETAILS', 103);
+        drawFieldRows([
+            ['Equipment', inc.equipmentName],
+            ['Equipment Code', inc.equipmentCode],
+            ['Category', inc.equipmentCategory],
+            ['Incident Date and Time', `${inc.incidentDate || 'N/A'}${inc.incidentTime ? ` at ${inc.incidentTime}` : ''}`],
+            ['Incident Type', inc.incidentType],
+            ['Severity', inc.severity],
+            ['Location', inc.location],
+            ['Borrowed On', formatBorrowingDate(borrowing.borrowedAt)],
+            ['Expected Return', borrowing.expectedReturnTime ? formatTimeTo12h(borrowing.expectedReturnTime) : ''],
+            ['Borrowing Room', borrowing.room]
+        ], 113, 10);
+
+        drawTextBlock('INCIDENT DESCRIPTION', inc.description || 'No description provided.', 165, 3);
+        drawTextBlock('IMMEDIATE ACTION TAKEN', inc.actionTaken || 'Not provided.', 189, 2);
+        drawTextBlock('WITNESSES', inc.witnesses || 'None reported.', 208, 1);
+
+        pdf.setDrawColor(180, 186, 194);
+        pdf.setLineWidth(0.3);
+        pdf.line(margin, 228, pageWidth - margin, 228);
+        pdf.setTextColor(75, 82, 90);
+        pdf.setFont('helvetica', 'italic');
+        pdf.setFontSize(7);
+        pdf.text(
+            inc.declarationAccepted
+                ? 'Reporter declaration: The information provided is certified accurate upon electronic submission.'
+                : 'Reporter declaration: Not recorded.',
+            margin,
+            234
+        );
+
+        const signatureY = 258;
+        const signatureWidth = 68;
+        pdf.setDrawColor(70, 77, 85);
+        pdf.line(margin, signatureY, margin + signatureWidth, signatureY);
+        pdf.line(pageWidth - margin - signatureWidth, signatureY, pageWidth - margin, signatureY);
+        pdf.setTextColor(35, 39, 44);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(8);
+        pdf.text(ellipsize(inc.reporterName || 'Reporter', signatureWidth, 8), margin, signatureY - 3);
+        pdf.text(
+            inc.approvedBy ? ellipsize(inc.approvedBy, signatureWidth, 8) : 'PENDING APPROVAL',
+            pageWidth - margin,
+            signatureY - 3,
+            { align: 'right' }
+        );
+        pdf.setTextColor(100, 108, 118);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(7);
+        pdf.text('Electronic reporter acknowledgment', margin, signatureY + 4);
+        pdf.text('Head / authorized signatory', pageWidth - margin, signatureY + 4, { align: 'right' });
+        if (inc.approvedAt?.toDate) {
+            pdf.text(
+                `Date approved: ${inc.approvedAt.toDate().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+                pageWidth - margin,
+                signatureY + 8,
+                { align: 'right' }
+            );
+        }
+
+        if (textShortened) {
+            pdf.setFont('helvetica', 'italic');
+            pdf.setFontSize(6.5);
+            pdf.setTextColor(110, 110, 110);
+            pdf.text('Some long field text is shortened to fit this one-page report; refer to the system record for full details.', pageWidth / 2, 278, { align: 'center' });
+        }
+        pdf.setDrawColor(190, 195, 202);
+        pdf.line(margin, 283, pageWidth - margin, 283);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(7);
+        pdf.setTextColor(120, 126, 134);
+        pdf.text(`MISLend System  |  Incident Report ${refNo}`, pageWidth / 2, 289, { align: 'center' });
+
+        pdf.save(`Incident-Report-${refNo}.pdf`);
+        showToast('PDF exported successfully!', 'success');
+
+    } catch (error) {
+        console.error('PDF export error:', error);
+        showToast('Failed to export PDF', 'error');
+    }
+}
+
+// ── Wire up incident panel buttons ──
+(function initIncidentPanel() {
+    const backBtn = document.getElementById('backToIncidentListBtn');
+    if (backBtn) {
+        backBtn.addEventListener('click', () => {
+            if (incidentChatUnsubscribe) { incidentChatUnsubscribe(); incidentChatUnsubscribe = null; }
+            currentIncidentId = null;
+            loadAllIncidents();
+        });
+    }
+
+    const sendBtn = document.getElementById('adminSendChatBtn');
+    const chatInput = document.getElementById('adminChatInput');
+    if (sendBtn) sendBtn.addEventListener('click', sendAdminIncidentMessage);
+    if (chatInput) {
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendAdminIncidentMessage();
+        });
+    }
+
+    const approveBtn = document.getElementById('approveIncidentBtn');
+    if (approveBtn) approveBtn.addEventListener('click', approveIncident);
+
+    const exportBtn = document.getElementById('exportIncidentPdfBtn');
+    if (exportBtn) exportBtn.addEventListener('click', exportIncidentPDF);
+})();
+
+window.openIncidentDetail = openIncidentDetail;
+window.loadAllIncidents = loadAllIncidents;

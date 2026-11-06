@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Barangay Management System</title>
+  <meta name="description"
+    content="Access resident services, household records, certificates, complaints, incident reports, and barangay announcements.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://uccmis.netlify.app/">
+  <meta property="og:title" content="Barangay Management System">
+  <meta property="og:description"
+    content="Resident services, barangay requests, community records, and role-based official dashboards.">
+  <meta property="og:image" content="https://raw.githubusercontent.com/CutieJi/bscs1a/main/wprev.png">
+  <link rel="shortcut icon" href="assets/images/logos.png" type="image/x-icon">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/home-ui.css?v=20261018-5">
+</head>
+
+<body>
+  <div id="preload">
+    <div class="loader">
+      <div class="loader-inner"></div>
+    </div>
+  </div>
+
+  <div id="contents">
+    <div class="nav-overlay" id="navOverlay"></div>
+
+    <nav class="header" id="mainNav">
+      <div class="left-nav">
+        <a href="index.html">
+          <img src="assets/images/logos.png" class="logo">
+          <span>Barangay Management System</span></a>
+      </div>
+
+      <div class="mobilenav" id="mobilenav">
+        <i class="fas fa-bars"></i>
+      </div>
+
+      <div class="right-nav" id="rightNav">
+        <div class="close-menu" id="closeMenu">
+          <i class="fas fa-times"></i>
+        </div>
+        <ul>
+          <li><a href="index.html" class="active">Home</a></li>
+          <li><a href="about-team.html">About</a></li>
+          <li><a href="contact.html">Feedback</a></li>
+          <li class="careers-menu" id="resourcesDropdown">
+            <a href="javascript:void(0)" class="dropdown-trigger">
+              Resources <i class="fas fa-chevron-down arrow-icon"></i>
+            </a>
+            <ul class="dropdown" id="dropdownMenu">
+              <li><a href="documentation.html">Documentation</a></li>
+              <li><a href="support.html">Support</a></li>
+              <li><a href="privacy.html">Privacy Policy</a></li>
+              <li><a href="terms.html">Terms &amp; Conditions</a></li>
+            </ul>
+          </li>
+          <li><a href="login.html"><button type="button" class="button">Sign In</button></a></li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="contents">
+      <div class="hero" id="home">
+        <div class="hero-background" aria-hidden="true"></div>
+        <div class="hero-inner">
+          <div class="hero-badge reveal-hero-1">
+            <span class="pulse"></span> Community Services Portal
+          </div>
+          <h1 class="reveal-hero-2">Barangay <span class="hl">Services</span></h1>
+          <p class="hero-sub reveal-hero-3">A shared portal for residents and barangay officials to manage records,
+            request certificates, report concerns, and follow community updates.</p>
+          <div class="hero-actions reveal-hero-4"
+            style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-top:8px;">
+            <a href="login.html" class="button"
+              style="text-decoration:none;display:inline-flex;align-items:center;gap:8px;font-size: 1rem;">Sign In
+              <i class="fa-solid fa-arrow-right"></i></a>
+            <a href="#info"
+              style="padding:10px 24px;border:2px solid white;color: white;border-radius:8px;font-size:1rem;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:8px;">Learn
+              More <i class="fa-solid fa-arrow-down"></i></a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resident services -->
+      <div class="fade-in-up" id="info">
+        <div class="info-content">
+          <div class="content-left">
+            <div class="content-badge">
+              <i class="fas fa-file-signature"></i>
+              <span>Resident Services</span>
+            </div>
+            <h1>Barangay services in one place</h1>
+            <p>Residents can update their profile, view household information, request certificates and clearances,
+              submit complaints, report incidents, and track appointments and requests.</p>
+            <div class="feature-highlights">
+              <div class="feature-item">
+                <i class="fas fa-check-circle"></i>
+                <span>Certificate and Clearance Requests</span>
+              </div>
+              <div class="feature-item">
+                <i class="fas fa-check-circle"></i>
+                <span>Request and Incident Tracking</span>
+              </div>
+              <div class="feature-item">
+                <i class="fas fa-check-circle"></i>
+                <span>Barangay Announcements</span>
+              </div>
+            </div>
+          </div>
+          <div class="content-right">
+            <div class="image-wrapper">
+              <img src="assets/images/pic1.webp" loading="lazy" decoding="async"
+                onerror="this.src='https://images.unsplash.com/photo-1542831371-29b0f74f9713?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'"
+                class="right-image" alt="Tech">
+              <div class="image-decoration"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Team Section (Tracking features) -->
+      <div class="fade-in-up">
+        <div class="info-content">
+          <div class="content-left">
+            <div class="image-wrapper">
+              <img src="assets/images/pic2.webp" loading="lazy" decoding="async"
+                onerror="this.src='https://images.unsplash.com/photo-1581092160562-40aa08e78837?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'"
+                class="right-image" alt="Team">
+              <div class="image-decoration"></div>
+            </div>
+          </div>
+          <div class="content-right">
+            <div class="content-badge">
+              <i class="fas fa-server"></i>
+              <span>Shared System Records</span>
+            </div>
+            <h1>Keep Requests, Items, and History Connected</h1>
+            <p>Borrowing and return activity is recorded in MISLend and shown in the relevant user and administrator
+              dashboards. Students and professors can review their requests, current loans, and borrowing history;
+              administrators can manage equipment, process approvals, and review logs.</p>
+            <p>Users can also submit incident reports from their account, while administrators review and manage those
+              reports in the system. Role-based access keeps each dashboard focused on the tasks for that role.</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Why Choose MISLend Section -->
+      <div class="fade-in-up" id="WhyJoin">
+        <div class="text-content">
+          <div class="WhyJoin">
+            <div class="section-badge">
+              <i class="fas fa-star"></i>
+              <span>Why Choose MISLend</span>
+            </div>
+            <h1>Why Use Our System?</h1>
+            <div class="title-underline"></div>
+          </div>
+
+          <div class="text-below">
+            <p>
+              MISLend brings the UCC MIS equipment process into one web system. Students and professors can browse
+              equipment, look up items by QR code, submit borrowing and return requests, and review their activity.
+              Administrators manage inventory, approvals, borrowing logs, and incident reports through a separate
+              dashboard.
+            </p>
+          </div>
+
+          <div class="Join-contents">
+            <div class="content-card">
+              <div class="card-icon">
+                <i class="fas fa-qrcode"></i>
+              </div>
+              <h1>QR Code Scanning</h1>
+              <p>Browse the catalog or scan an equipment QR code, add items to your cart, and submit a request for
+                administrator review.</p>
+            </div>
+            <div class="content-card">
+              <div class="card-icon">
+                <i class="fas fa-chart-line"></i>
+              </div>
+              <h1>Equipment Status</h1>
+              <p>Review equipment records and availability in the system, then check your own requests and borrowed
+                items from your dashboard.</p>
+            </div>
+            <div class="content-card">
+              <div class="card-icon">
+                <i class="fas fa-shield-alt"></i>
+              </div>
+              <h1>Accountability & Logs</h1>
+              <p>Borrowing and return activity is recorded in user history and administrator logs to support clear
+                review of equipment transactions.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Intern Section -->
+      <div class="fade-in-up">
+        <div class="Intern-part">
+          <div class="content-left">
+            <div class="image-wrapper">
+              <img src="assets/images/pic3.webp" loading="lazy" decoding="async"
+                onerror="this.src='https://images.unsplash.com/photo-1522202176988-66273c2fd55f?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80'"
+                class="right-image" alt="Students">
+              <div class="image-decoration"></div>
+            </div>
+          </div>
+          <div class="content-right">
+            <div class="content-badge">
+              <i class="fas fa-book-open"></i>
+              <span>Start Your Journey</span>
+            </div>
+            <h1>Start Borrowing Equipment</h1>
+            <p>UCC MIS students and professors can use MISLend to find classroom equipment and submit borrowing
+              requests through their account. Requests and active loans remain available in their dashboard.</p>
+            <p>Sign in to browse the catalog, scan equipment QR codes, manage your borrowing cart, and review request
+              updates and borrowing history.</p>
+            <a href="login.html">
+              <button type="button" class="ojt">
+                <span>Proceed to Login</span>
+                <i class="fas fa-arrow-right"></i>
+              </button>
+            </a>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- FAQ Modal Trigger -->
+    <div class="info-section">
+      <div class="info-logo" onclick="toggleFAQ()">
+        <i class="fas fa-question-circle"></i>
+      </div>
+    </div>
+
+    <!-- Modal -->
+    <div class="faq-modal" id="faqModal">
+      <div class="faq-wrapper">
+        <div class="faq-header">
+          <h1>Frequently Asked Questions</h1>
+          <p>Everything you need to know about our borrowing process</p>
+          <span class="faq-close" onclick="toggleFAQ()">&times;</span>
+        </div>
+
+        <div class="faq-content">
+          <div class="faq-item">
+            <div class="faq-question">
+              <div class="question-text">
+                <span class="question-number">1</span>
+                <h3>Who can borrow equipment?</h3>
+              </div>
+              <i class="fas fa-angle-down faq-arrow"></i>
+            </div>
+            <div class="faq-answer">
+              <div class="answer-content">
+                <p>Only currently enrolled UCC MIS students and verified faculty members can use MISLend.</p>
+              </div>
+            </div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-question">
+              <div class="question-text">
+                <span class="question-number">2</span>
+                <h3>How long can I keep an item?</h3>
+              </div>
+              <i class="fas fa-angle-down faq-arrow"></i>
+            </div>
+            <div class="faq-answer">
+              <div class="answer-content">
+                <p>Standard items like projectors and cables can be borrowed for the duration of a single class block
+                  (typically 2-3 hours).</p>
+              </div>
+            </div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-question">
+              <div class="question-text">
+                <span class="question-number">3</span>
+                <h3>What happens if I return equipment late?</h3>
+              </div>
+              <i class="fas fa-angle-down faq-arrow"></i>
+            </div>
+            <div class="faq-answer">
+              <div class="answer-content">
+                <p>Late returns are flagged in the system. Accumulating records of overdue returns may lead to temporary
+                  suspension of your borrowing privileges.</p>
+              </div>
+            </div>
+          </div>
+          <div class="faq-item">
+            <div class="faq-question">
+              <div class="question-text">
+                <span class="question-number">4</span>
+                <h3>Do I need an ID?</h3>
+              </div>
+              <i class="fas fa-angle-down faq-arrow"></i>
+            </div>
+            <div class="faq-answer">
+              <div class="answer-content">
+                <p>Yes. Presenting your valid UCC Student or Faculty ID to the admin is required upon picking up the
+                  equipment.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <div class="footer-container">
+        <div class="footer-grid">
+          <div class="footer-brand">
+            <img src="assets/images/logos.png" alt="MISLend logo" />
+            <h2>MIS<span>Lend</span></h2>
+            <p>Equipment Borrowing System for the UCC-MIS Office.</p>
+          </div>
+          <div class="footer-col">
+            <h4>Navigate</h4>
+            <ul>
+              <li><a href="index.html">Home</a></li>
+              <li><a href="about-team.html">About & Team</a></li>
+              <li><a href="contact.html">Feedback</a></li>
+              <li><a href="login.html">Sign In</a></li>
+            </ul>
+          </div>
+          <div class="footer-col">
+            <h4>Resources</h4>
+            <ul>
+              <li><a href="documentation.html">Documentation</a></li>
+              <li><a href="support.html">Support</a></li>
+              <li><a href="privacy.html">Privacy Policy</a></li>
+              <li><a href="terms.html">Terms &amp; Conditions</a></li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer-bottom">
+          <span>&copy; 2026 MISLend. All rights reserved.</span>
+          <span>Developed by UCC BSCS 2A.</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="https://kit.fontawesome.com/ca64101f16.js" crossorigin="anonymous" async></script>
+  <script src="assets/js/app.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script>
+    // Remove preloader
+    window.addEventListener('DOMContentLoaded', () => {
+      const preload = document.getElementById('preload');
+      if (preload) {
+        preload.style.opacity = '0';
+        setTimeout(() => preload.remove(), 500);
+      }
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      // Elements
+      const mobilenav = document.getElementById("mobilenav");
+      const rightNav = document.getElementById("rightNav");
+      const closeMenu = document.getElementById("closeMenu");
+      const navOverlay = document.getElementById("navOverlay");
+      const resDropdown = document.getElementById('resourcesDropdown');
+
+      // --- Mobile Menu Toggle ---
+      const toggleMenu = (open) => {
+        if (open) {
+          rightNav.classList.add("active");
+          if (navOverlay) navOverlay.classList.add("active");
+          document.body.style.overflow = 'hidden';
+        } else {
+          rightNav.classList.remove("active");
+          if (navOverlay) navOverlay.classList.remove("active");
+          document.body.style.overflow = '';
+        }
+      };
+
+      if (mobilenav) mobilenav.addEventListener("click", () => toggleMenu(true));
+      if (closeMenu) closeMenu.addEventListener("click", () => toggleMenu(false));
+      if (navOverlay) navOverlay.addEventListener("click", () => toggleMenu(false));
+
+      // --- Resources Dropdown ---
+      if (resDropdown) {
+        resDropdown.addEventListener('click', (e) => {
+          e.stopPropagation();
+          resDropdown.classList.toggle('active');
+        });
+      }
+      window.addEventListener('click', () => {
+        if (resDropdown) resDropdown.classList.remove('active');
+      });
+
+      // --- Scroll Animations ---
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.1 });
+
+      document.querySelectorAll('.fade-in-up, .fade-up').forEach((el) => observer.observe(el));
+
+      // --- FAQ Interaction ---
+      document.querySelectorAll('.faq-question').forEach(q => {
+        q.addEventListener('click', () => {
+          const item = q.parentElement;
+          const isActive = item.classList.contains('active');
+          document.querySelectorAll('.faq-item').forEach(i => i.classList.remove('active'));
+          if (!isActive) item.classList.add('active');
+        });
+      });
+    });
+
+    // Global FAQ Toggle (for inline onclick)
+    function toggleFAQ() {
+      const modal = document.getElementById('faqModal');
+      if (modal) modal.classList.toggle('open');
+    }
+  </script>
+</body>
+
+</html>
