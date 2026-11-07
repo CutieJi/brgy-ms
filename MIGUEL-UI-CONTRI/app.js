@@ -36,22 +36,36 @@ const T = {
 };
 
 // Login
-$('#loginForm').onsubmit = async e => {
+const loginForm = $('#loginForm');
+
+loginForm.querySelectorAll('.password-field').forEach(field => {
+  const input = field.querySelector('input');
+  const toggle = field.querySelector('.toggle-password');
+  toggle.onclick = () => {
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    toggle.textContent = show ? 'Hide' : 'Show';
+    toggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  };
+});
+
+loginForm.onsubmit = async e => {
   e.preventDefault();
   const f = Object.fromEntries(new FormData(e.target));
-  const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) });
-  const d = await r.json();
-  if (!r.ok) return ($('#loginErr').textContent = d.error);
+  const err = $('#loginErr');
+  err.textContent = '';
+  err.classList.remove('ok');
+
+  const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: f.email, password: f.password }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return (err.textContent = d.error || 'Login failed.');
   token = d.token; sessionStorage.setItem('tok', token); start();
 };
-const pwInput = $('.password-field input');
-const pwToggle = $('.toggle-password');
-pwToggle.onclick = () => {
-  const show = pwInput.type === 'password';
-  pwInput.type = show ? 'text' : 'password';
-  pwToggle.textContent = show ? 'Hide' : 'Show';
-  pwToggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
-};
+
+if (new URLSearchParams(location.search).has('registered')) {
+  $('#loginErr').classList.add('ok');
+  $('#loginErr').textContent = 'Account created. Please sign in.';
+}
 function logout() { sessionStorage.clear(); location.reload(); }
 $('#logout').onclick = logout;
 
