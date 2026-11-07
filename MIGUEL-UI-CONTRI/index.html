@@ -1,73 +1,112 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width,initial-scale=1" />
+		<title>Barangay Management System</title>
+		<link rel="icon" href="assets/images/logo.png" type="image/png" />
+		<link rel="stylesheet" href="style.css" />
+	</head>
 
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Barangay Management System</title>
-  <link rel="icon" href="assets/images/logo.png" type="image/png">
-  <link rel="stylesheet" href="style.css">
-</head>
+	<body>
+		<section id="login">
+			<img class="bg" src="assets/images/back-bg.jpg" alt="" />
+			<div class="brand">
+				<img
+					class="logo"
+					src="assets/images/logo.png"
+					alt="Barangay logo"
+				/>
+				<div class="brand-text">
+					<strong>Barangay 89</strong>
+					<span
+						>Biglang Awa Street, Cor 11th Ave Catleya, Caloocan,
+						1400 Metro Manila</span
+					>
+				</div>
+			</div>
+			<form id="loginForm">
+				<h1>Login</h1>
+				<p>Sign in to manage records.</p>
+				<label
+					><span>Email <span class="req">*</span></span>
+					<input
+						name="email"
+						type="email"
+						placeholder="Enter your email"
+						required
+					/>
+				</label>
+				<label
+					><span>Password <span class="req">*</span></span>
+					<div class="password-field">
+						<input
+							name="password"
+							type="password"
+							placeholder="Enter your password"
+							required
+						/>
+						<button
+							type="button"
+							class="toggle-password"
+							aria-label="Show password"
+						>
+							Show
+						</button>
+					</div>
+				</label>
+				<div class="forgot-row" id="forgotWrap">
+					<a href="../reset-password.html">Forgot password?</a>
+				</div>
+				<button>Sign in</button>
+				<small id="loginErr"></small>
+				<p class="register">
+					Don't have an account?
+					<a href="register.html">Register</a>
+				</p>
+			</form>
+		</section>
 
-<body>
-  <section id="login">
-    <img class="bg" src="assets/images/back-bg.jpg" alt="">
-    <div class="brand">
-      <img class="logo" src="assets/images/logo.png" alt="Barangay logo">
-      <div class="brand-text">
-        <strong>Barangay 89</strong>
-        <span>Biglang Awa Street, Cor 11th Ave Catleya, Caloocan, 1400 Metro Manila</span>
-      </div>
-    </div>
-    <form id="loginForm">
-      <h1>Login</h1>
-      <p>Sign in to manage records.</p>
-      <label><span>Email <span class="req">*</span></span>
-        <input name="email" type="email" placeholder="Enter your email" required>
-      </label>
-      <label><span>Password <span class="req">*</span></span>
-        <div class="password-field">
-          <input name="password" type="password" placeholder="Enter your password" required>
-          <button type="button" class="toggle-password" aria-label="Show password">Show</button>
-        </div>
-      </label>
-      <button>Sign in</button>
-      <small id="loginErr"></small>
-      <p class="register">Don't have an account? <a href="#">Register</a></p>
-    </form>
-  </section>
+		<div id="app" hidden>
+			<aside>
+				<h2>Barangay<br />Office</h2>
+				<nav>
+					<a data-tab="dashboard" class="on">Dashboard</a>
+					<a data-tab="residents">Residents</a>
+					<a data-tab="certificates">Certificates</a>
+					<a data-tab="blotters">Blotter</a>
+				</nav>
+				<button id="logout" class="ghost">Sign out</button>
+			</aside>
+			<main>
+				<header>
+					<h1 id="title">Dashboard</h1>
+					<button id="addBtn" hidden>Add record</button>
+				</header>
+				<div id="stats"></div>
+				<input id="search" placeholder="Search..." hidden />
+				<div class="scroll">
+					<table id="table"></table>
+				</div>
+			</main>
+		</div>
 
-  <div id="app" hidden>
-    <aside>
-      <h2>Barangay<br>Office</h2>
-      <nav>
-        <a data-tab="dashboard" class="on">Dashboard</a>
-        <a data-tab="residents">Residents</a>
-        <a data-tab="certificates">Certificates</a>
-        <a data-tab="blotters">Blotter</a>
-      </nav>
-      <button id="logout" class="ghost">Sign out</button>
-    </aside>
-    <main>
-      <header>
-        <h1 id="title">Dashboard</h1><button id="addBtn" hidden>Add record</button>
-      </header>
-      <div id="stats"></div>
-      <input id="search" placeholder="Search..." hidden>
-      <div class="scroll">
-        <table id="table"></table>
-      </div>
-    </main>
-  </div>
-
-  <dialog id="dlg">
-    <form id="form" method="dialog">
-      <h3 id="dlgTitle"></h3>
-      <div id="fields"></div>
-      <menu><button value="cancel" class="ghost" type="button" id="cancel">Cancel</button><button>Save</button></menu>
-    </form>
-  </dialog>
-  <script src="app.js"></script>
-</body>
-
+		<dialog id="dlg">
+			<form id="form" method="dialog">
+				<h3 id="dlgTitle"></h3>
+				<div id="fields"></div>
+				<menu>
+					<button
+						value="cancel"
+						class="ghost"
+						type="button"
+						id="cancel"
+					>
+						Cancel</button
+					><button>Save</button>
+				</menu>
+			</form>
+		</dialog>
+		<script src="app.js"></script>
+	</body>
 </html>
