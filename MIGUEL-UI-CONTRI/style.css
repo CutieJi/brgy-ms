@@ -4,426 +4,532 @@
 
 /* ---------- Design tokens ---------- */
 :root {
-  --bg: #f3f5f2;
-  --ink: #1c2a24;
-  --muted: #66756d;
-  --line: #d9dfda;
-  --brand: #1f5e4b;
-  --brand2: #e0a43a;
-  --card: #fff;
+	--bg: #f3f5f2;
+	--ink: #1c2a24;
+	--muted: #66756d;
+	--line: #d9dfda;
+	--brand: #1f5e4b;
+	--brand2: #e0a43a;
+	--card: #fff;
 }
 
 /* ---------- Base ---------- */
 * {
-  box-sizing: border-box;
+	box-sizing: border-box;
 }
 
 body {
-  margin: 0;
-  font: 15px/1.5 "Segoe UI", system-ui, sans-serif;
-  background: var(--bg);
-  color: var(--ink);
+	margin: 0;
+	font:
+		15px/1.5 'Segoe UI',
+		system-ui,
+		sans-serif;
+	background: var(--bg);
+	color: var(--ink);
 }
 
 h1 {
-  font-family: Arial, Helvetica, sans-serif;
-  font-weight: 700;
-  margin: 0;
+	font-family: Arial, Helvetica, sans-serif;
+	font-weight: 700;
+	margin: 0;
 }
 
 h2,
 h3 {
-  font-family: Georgia, "Times New Roman", serif;
-  margin: 0;
+	font-family: Georgia, 'Times New Roman', serif;
+	margin: 0;
 }
 
 input,
 select,
 textarea,
 button {
-  font: inherit;
+	font: inherit;
 }
 
 input,
 select,
 textarea {
-  width: 100%;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fff;
+	width: 100%;
+	padding: 9px 10px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: #fff;
 }
 
 /* ---------- Buttons ---------- */
 button {
-  background: var(--brand);
-  color: #fff;
-  border: 0;
-  padding: 9px 16px;
-  border-radius: 6px;
-  cursor: pointer;
+	background: var(--brand);
+	color: #fff;
+	border: 0;
+	padding: 9px 16px;
+	border-radius: 6px;
+	cursor: pointer;
 }
 
 button:hover {
-  filter: brightness(1.1);
+	filter: brightness(1.1);
 }
 
 button:focus-visible,
 a:focus-visible,
 input:focus-visible {
-  outline: 2px solid var(--brand2);
-  outline-offset: 2px;
+	outline: 2px solid var(--brand2);
+	outline-offset: 2px;
 }
 
 button.ghost {
-  background: transparent;
-  color: inherit;
-  border: 1px solid currentColor;
+	background: transparent;
+	color: inherit;
+	border: 1px solid currentColor;
 }
 
 button.sm {
-  padding: 4px 9px;
-  font-size: 13px;
-  margin-right: 4px;
+	padding: 4px 9px;
+	font-size: 13px;
+	margin-right: 4px;
 }
 
 button.danger {
-  background: #a43a2f;
+	background: #a43a2f;
 }
 
 /* ---------- Login ---------- */
 #login {
-  position: relative;
-  min-height: 100vh;
-  display: grid;
-  place-items: center end;
-  padding: 24px 230px;
-  overflow: hidden;
-  background: #0b1a2b;
+	position: relative;
+	min-height: 100vh;
+	display: grid;
+	place-items: center end;
+	padding: 24px 230px;
+	overflow: hidden;
+	background: #0b1a2b;
 }
 
 #login[hidden] {
-  display: none;
+	display: none;
 }
 
 #login .bg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  filter: blur(3px) saturate(0.75) brightness(0.8) contrast(1.05);
-  transform: scale(1.05);
-  z-index: 0;
-  pointer-events: none;
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	filter: blur(3px) saturate(0.75) brightness(0.8) contrast(1.05);
+	transform: scale(1.05);
+	z-index: 0;
+	pointer-events: none;
 }
 
 #login::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(rgba(10, 30, 58, 0.55), rgba(5, 18, 38, 0.7)),
-    radial-gradient(ellipse at center, transparent 35%, rgba(0, 0, 0, 0.6) 100%),
-    radial-gradient(circle at 75% 25%, rgba(35, 130, 170, 0.12), transparent 55%);
-  z-index: 1;
-  pointer-events: none;
+	content: '';
+	position: absolute;
+	inset: 0;
+	background:
+		linear-gradient(rgba(10, 30, 58, 0.55), rgba(5, 18, 38, 0.7)),
+		radial-gradient(
+			ellipse at center,
+			transparent 35%,
+			rgba(0, 0, 0, 0.6) 100%
+		),
+		radial-gradient(
+			circle at 75% 25%,
+			rgba(35, 130, 170, 0.12),
+			transparent 55%
+		);
+	z-index: 1;
+	pointer-events: none;
 }
 
 #login > * {
-  z-index: 2;
+	z-index: 2;
 }
 
 #loginForm {
-  width: 450px;
-  background: var(--card);
-  padding: 50px 30px;
-  transform: translateY(40px);
-  border-radius: 8px;
-  display: grid;
-  gap: 12px;
-  border-top: 5px solid var(--brand2);
+	width: 450px;
+	background: var(--card);
+	padding: 50px 30px;
+	transform: translateY(40px);
+	border-radius: 8px;
+	display: grid;
+	gap: 12px;
+	border-top: 5px solid var(--brand2);
 }
 
 #loginForm h1 {
-  font-size: 40px;
-  text-align: center;
+	font-size: 40px;
+	text-align: center;
+}
+
+#loginForm [hidden] {
+	display: none !important;
 }
 
 #loginForm h1 + p {
-  color: #64748b;
+	color: #64748b;
 }
 
 #loginForm .req {
-  color: #dc2626;
+	color: #dc2626;
 }
 
 #loginForm label > span:first-child {
-  font-size: 15px;
-  color: #333;
+	font-size: 15px;
+	color: #333;
+}
+
+#loginForm input::placeholder {
+	font-size: 15px;
 }
 
 .password-field {
-  position: relative;
+	position: relative;
 }
 
 #loginForm .password-field input {
-  padding-right: 64px;
+	padding-right: 64px;
 }
 
 #loginForm .toggle-password {
-  position: absolute;
-  top: 50%;
-  right: 12px;
-  transform: translateY(-50%);
-  padding: 0;
-  background: transparent;
-  color: #2563eb;
-  border: 0;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
+	position: absolute;
+	top: 50%;
+	right: 12px;
+	transform: translateY(-50%);
+	padding: 0;
+	background: transparent;
+	color: #2563eb;
+	border: 0;
+	font-size: 14px;
+	font-weight: 700;
+	cursor: pointer;
 }
 
 #loginForm button {
-  background: #000;
+	background: #000;
+}
+
+#loginForm .forgot-row {
+	display: flex;
+	justify-content: flex-start;
+	margin-top: -6px;
+	font-size: 14px;
+}
+
+#loginForm .forgot-row a {
+	color: #7c8499;
+	font-size: 14px;
+	font-weight: 600;
+	text-decoration: none;
+}
+
+#loginForm .forgot-row a:hover {
+	text-decoration: none;
 }
 
 .register {
-  margin: -6px 0 0;
-  text-align: center;
-  font-size: 14px;
-  color: var(--muted);
+	margin: -6px 0 0;
+	text-align: center;
+	font-size: 14px;
+	color: var(--muted);
 }
 
 .register a {
-  color: #2563eb;
-  font-weight: 600;
-  text-decoration: none;
+	color: #2563eb;
+	font-weight: 600;
+	text-decoration: none;
 }
 
 .register a:hover {
-  text-decoration: underline;
+	text-decoration: none;
+}
+
+#loginForm .terms {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	font-size: 14px;
+	color: var(--muted);
+}
+
+#loginForm .terms input {
+	width: 16px;
+	height: 16px;
+	margin: 2px 0 0;
+	padding: 0;
+	flex: none;
+	accent-color: #2563eb;
+}
+
+#loginForm .terms .terms-text {
+	display: block;
+	font-size: 14px;
+	color: #4b5563;
+	line-height: 1.4;
+	font-weight: 500;
+}
+
+#loginForm .terms a {
+	color: #2563eb;
+	font-weight: 600;
+	text-decoration: none;
+}
+
+#loginForm .terms a:hover {
+	text-decoration: underline;
+}
+
+/* ---------- Legal pages ---------- */
+.doc-page {
+	max-width: 800px;
+	margin: 0 auto;
+	padding: 60px 24px;
+	display: grid;
+	gap: 14px;
+}
+
+.doc-page h1 {
+	font-size: 32px;
+}
+
+.doc-page p {
+	margin: 0;
+	color: var(--muted);
+}
+
+.doc-page a {
+	color: #2563eb;
+	font-weight: 600;
+	text-decoration: none;
+}
+
+.doc-page a:hover {
+	text-decoration: underline;
 }
 
 #login .brand {
-  position: absolute;
-  top: 24px;
-  left: 100px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  z-index: 2;
+	position: absolute;
+	top: 24px;
+	left: 100px;
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	z-index: 2;
 }
 
 #login .logo {
-  height: 84px;
-  width: auto;
-  flex-shrink: 0;
+	height: 84px;
+	width: auto;
+	flex-shrink: 0;
 }
 
 #login .brand-text {
-  display: grid;
-  gap: 3px;
-  color: #fff;
+	display: grid;
+	gap: 3px;
+	color: #fff;
 }
 
 #login .brand-text strong {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+	font-size: 20px;
+	font-weight: 700;
+	letter-spacing: 0.02em;
 }
 
 #login .brand-text span {
-  font-size: 12px;
-  line-height: 1.4;
-  color: rgba(255, 255, 255, 0.8);
-  white-space: nowrap;
+	font-size: 12px;
+	line-height: 1.4;
+	color: rgba(255, 255, 255, 0.8);
+	white-space: nowrap;
 }
 
 #loginErr {
-  color: #a43a2f;
+	color: #a43a2f;
+}
+
+#loginErr.ok {
+	color: #1a7f5a;
 }
 
 /* ---------- App shell ---------- */
 #app {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  min-height: 100vh;
+	display: grid;
+	grid-template-columns: 220px 1fr;
+	min-height: 100vh;
 }
 
 #app[hidden] {
-  display: none;
+	display: none;
 }
 
 aside {
-  background: var(--brand);
-  color: #fff;
-  padding: 24px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+	background: var(--brand);
+	color: #fff;
+	padding: 24px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
 }
 
 aside h2 {
-  font-size: 24px;
-  line-height: 1.1;
+	font-size: 24px;
+	line-height: 1.1;
 }
 
 nav {
-  display: grid;
-  gap: 4px;
-  flex: 1;
-  align-content: start;
+	display: grid;
+	gap: 4px;
+	flex: 1;
+	align-content: start;
 }
 
 nav a {
-  padding: 9px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  color: #cfe3da;
+	padding: 9px 12px;
+	border-radius: 6px;
+	cursor: pointer;
+	color: #cfe3da;
 }
 
 nav a.on,
 nav a:hover {
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
+	background: rgba(255, 255, 255, 0.14);
+	color: #fff;
 }
 
 main {
-  padding: 28px;
-  min-width: 0;
+	padding: 28px;
+	min-width: 0;
 }
 
 header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 20px;
 }
 
 /* ---------- Dashboard ---------- */
 #stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 14px;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+	gap: 14px;
 }
 
 .stat {
-  background: var(--card);
-  padding: 18px;
-  border-left: 4px solid var(--brand2);
-  border-radius: 4px;
+	background: var(--card);
+	padding: 18px;
+	border-left: 4px solid var(--brand2);
+	border-radius: 4px;
 }
 
 .stat b {
-  display: block;
-  font: 700 32px Georgia, serif;
+	display: block;
+	font:
+		700 32px Georgia,
+		serif;
 }
 
 .stat span {
-  color: var(--muted);
+	color: var(--muted);
 }
 
 /* ---------- Records table ---------- */
 #search {
-  margin-bottom: 12px;
-  max-width: 340px;
+	margin-bottom: 12px;
+	max-width: 340px;
 }
 
 .scroll {
-  overflow-x: auto;
-  background: var(--card);
-  border-radius: 6px;
+	overflow-x: auto;
+	background: var(--card);
+	border-radius: 6px;
 }
 
 table {
-  width: 100%;
-  border-collapse: collapse;
+	width: 100%;
+	border-collapse: collapse;
 }
 
 th,
 td {
-  padding: 10px 12px;
-  text-align: left;
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
+	padding: 10px 12px;
+	text-align: left;
+	border-bottom: 1px solid var(--line);
+	white-space: nowrap;
 }
 
 th {
-  background: #eaf0ec;
-  font-weight: 600;
+	background: #eaf0ec;
+	font-weight: 600;
 }
 
 .empty {
-  padding: 28px;
-  color: var(--muted);
+	padding: 28px;
+	color: var(--muted);
 }
 
 /* ---------- Dialog ---------- */
 dialog {
-  border: 0;
-  border-radius: 8px;
-  padding: 24px;
-  width: min(460px, 94vw);
+	border: 0;
+	border-radius: 8px;
+	padding: 24px;
+	width: min(460px, 94vw);
 }
 
 dialog::backdrop {
-  background: rgba(0, 0, 0, 0.45);
+	background: rgba(0, 0, 0, 0.45);
 }
 
 #fields {
-  display: grid;
-  gap: 10px;
-  margin: 14px 0;
+	display: grid;
+	gap: 10px;
+	margin: 14px 0;
 }
 
 label {
-  display: grid;
-  gap: 3px;
-  font-size: 13px;
-  color: var(--muted);
+	display: grid;
+	gap: 3px;
+	font-size: 13px;
+	color: var(--muted);
 }
 
 menu {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 0;
-  margin: 0;
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	padding: 0;
+	margin: 0;
 }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 720px) {
-  #app {
-    grid-template-columns: 1fr;
-  }
+	#app {
+		grid-template-columns: 1fr;
+	}
 
-  aside {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-  }
+	aside {
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: center;
+	}
 
-  nav {
-    display: flex;
-    flex: none;
-  }
+	nav {
+		display: flex;
+		flex: none;
+	}
 }
 
 /* ---------- Print ---------- */
 @media print {
-  body * {
-    visibility: hidden;
-  }
+	body * {
+		visibility: hidden;
+	}
 
-  #cert,
-  #cert * {
-    visibility: visible;
-  }
+	#cert,
+	#cert * {
+		visibility: visible;
+	}
 
-  #cert {
-    position: absolute;
-    inset: 0;
-  }
+	#cert {
+		position: absolute;
+		inset: 0;
+	}
 }
