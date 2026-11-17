@@ -118,4 +118,4 @@ The SQL seed accounts are development-only:
 | Resident | `residentdemo` | `resident.demo@barangay.local` | `Resident123!` |
 | Superadmin | `superadmin` | `superadmin.demo@barangay.local` | `Barangay123!` |
 
-Change both passwords before deployment. Public registration creates resident accounts; official accounts are created by the captain or superadmin.
+Change both passwords before deployment. Public registration creates resident accounts; official accounts are created by the captain or superadmin. 
